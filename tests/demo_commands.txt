@@ -1,0 +1,4 @@
+# Initial skeleton demo
+help
+unknown_command
+exit
