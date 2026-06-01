@@ -415,14 +415,14 @@ CommandResponse CommandDispatcher::dispatch(
         return {true, processManager.readyQueueSnapshot(owner), false};
     }
 
-    // TODO(P4+): memory, scheduler, VFS, and IPC commands must also call requireLogin() before touching OS resources.
+    // TODO(P7+): VFS and IPC commands must also call requireLogin() before touching OS resources.
 
     if (command.name == "save") {
-        return {true, "[TODO] binary save will be implemented in persistence phase", false};
+        return {false, "Persistence command must be handled by Kernel.", false};
     }
 
     if (command.name == "load") {
-        return {true, "[TODO] binary load will be implemented in persistence phase", false};
+        return {false, "Persistence command must be handled by Kernel.", false};
     }
 
     std::ostringstream output;
@@ -436,11 +436,13 @@ std::string CommandDispatcher::helpText() const {
     output << "Available commands:\n"
            << "  help    - show this command list\n"
            << "  status  - show basic kernel status\n"
-           << "  save    - placeholder for binary persistence\n"
-           << "  load    - placeholder for binary persistence\n"
            << "  clear   - clear the console area\n"
            << "  exit    - cleanly shut down the simulator\n"
            << "  quit    - cleanly shut down the simulator\n"
+           << "\n"
+           << "Persistence commands:\n"
+           << "  save    Save complete simulator state to binary file\n"
+           << "  load    Load complete simulator state from binary file\n"
            << "\n"
            << "User commands:\n"
            << "  register <username> <password>   Register a new user\n"
@@ -471,7 +473,13 @@ std::string CommandDispatcher::helpText() const {
            << "  pgfault [pid]               Simulate a page fault\n"
            << "  swap_out <pid>              Simulate swapping out a process\n"
            << "\n"
-           << "OS feature commands for users, PCB, memory, MLFQ, VFS, persistence, and IPC will be added later.";
+           << "Scheduler commands:\n"
+           << "  start_sched     Start automatic MLFQ scheduling\n"
+           << "  stop_sched      Stop automatic scheduling\n"
+           << "  restart_sched   Restart automatic scheduler\n"
+           << "  step            Execute one scheduling step and print decision details\n"
+           << "\n"
+           << "OS feature commands for VFS, persistence, and IPC will be added later.";
     return output.str();
 }
 
@@ -482,10 +490,14 @@ std::string CommandDispatcher::statusText(
     std::ostringstream output;
     output << "=== Kernel Status ===\n"
            << "Worker Thread: " << (context.workerRunning ? "RUNNING" : "STOPPED") << '\n'
+           << "Scheduler: " << (context.schedulerRunning ? "RUNNING" : "STOPPED") << '\n'
+           << "Scheduler Owner: " << (context.schedulerOwner.empty() ? "<none>" : context.schedulerOwner) << '\n'
+           << "Auto Interval: " << context.schedulerIntervalMs << "ms\n"
+           << "Snapshot File: " << context.snapshotPath << '\n'
+           << "Auto Load: " << context.autoLoadStatus << '\n'
            << "Current User: " << (context.username.empty() ? "<none>" : context.username) << '\n'
            << "Process Count: " << (context.username.empty() ? 0 : processManager.processCount(context.username)) << '\n'
            << processManager.readyQueueSnapshot(context.username) << '\n'
-           << "Scheduler: NOT IMPLEMENTED\n"
            << "Memory Manager: ENABLED\n"
            << "Total Memory: " << memoryManager.totalMemoryKB() << " KB\n"
            << "Allocation Algorithm: " << memoryManager.currentAlgorithmName() << '\n'

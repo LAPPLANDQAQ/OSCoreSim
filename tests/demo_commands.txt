@@ -55,6 +55,12 @@ compact
 show_mem
 create_pcb p1 64 0 10
 create_pcb p2 128 5 20
+readyq
+step
+step
+start_sched
+stop_sched
+readyq
 show_mem
 swap_out 6
 show_pcb 6

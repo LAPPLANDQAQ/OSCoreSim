@@ -103,6 +103,11 @@ bool UserManager::userExists(const std::string& username) const {
     return users_.find(username) != users_.end();
 }
 
+void UserManager::clearCurrentSession() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    currentUser_.reset();
+}
+
 std::vector<UserAccount> UserManager::exportUsers() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<UserAccount> users;

@@ -13,14 +13,14 @@ set(OS_SIM_CORE_SOURCES
     src/kernel/CommandDispatcher.cpp
     src/auth/UserManager.cpp
     src/process/ProcessManager.cpp
+    src/process/Scheduler.cpp
     src/memory/MemoryManager.cpp
+    src/persistence/SnapshotStore.cpp
 )
 
 set(OS_SIM_SOURCES
     src/app/ConsoleApp.cpp
     ${OS_SIM_CORE_SOURCES}
-    src/process/Scheduler.cpp
-    src/persistence/SnapshotStore.cpp
     src/ipc/NamedPipeServer.cpp
     src/ipc/NamedPipeClient.cpp
     src/vfs/VirtualFileSystem.cpp

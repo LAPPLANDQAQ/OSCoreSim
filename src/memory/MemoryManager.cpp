@@ -251,6 +251,11 @@ std::uint32_t MemoryManager::totalMemoryKB() const {
     return totalMemoryKB_;
 }
 
+void MemoryManager::setTotalMemoryKB(std::uint32_t totalMemoryKB) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    totalMemoryKB_ = totalMemoryKB;
+}
+
 std::uint32_t MemoryManager::usedMemoryKB() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::uint32_t used = 0;
@@ -271,6 +276,52 @@ std::uint32_t MemoryManager::freeMemoryKB() const {
         }
     }
     return free;
+}
+
+void MemoryManager::setAlgorithmDirect(AllocAlgorithm algorithm) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    algorithm_ = algorithm;
+}
+
+bool MemoryManager::validateBlocks(std::string& message) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (totalMemoryKB_ == 0) {
+        message = "Memory validation failed: total memory must be greater than 0.";
+        return false;
+    }
+    if (blocks_.empty()) {
+        message = "Memory validation failed: block table is empty.";
+        return false;
+    }
+
+    std::uint32_t expectedStart = 0;
+    for (const auto& block : blocks_) {
+        if (block.size == 0) {
+            message = "Memory validation failed: block size cannot be zero.";
+            return false;
+        }
+        if (block.start != expectedStart) {
+            message = "Memory validation failed: blocks are not contiguous or sorted.";
+            return false;
+        }
+        if (block.size > totalMemoryKB_ || block.start > totalMemoryKB_ - block.size) {
+            message = "Memory validation failed: block exceeds total memory range.";
+            return false;
+        }
+        if (block.type == MemoryBlockType::FREE && (block.pid != 0 || !block.owner.empty())) {
+            message = "Memory validation failed: FREE block contains owner or PID.";
+            return false;
+        }
+        expectedStart = block.start + block.size;
+    }
+
+    if (expectedStart != totalMemoryKB_) {
+        message = "Memory validation failed: blocks do not cover total memory.";
+        return false;
+    }
+
+    message = "Memory validation passed.";
+    return true;
 }
 
 std::vector<MemoryBlock> MemoryManager::exportBlocks() const {

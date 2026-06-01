@@ -42,6 +42,11 @@ struct CommandContext {
     std::string username;
     CommandSource source = CommandSource::LocalConsole;
     bool workerRunning = false;
+    bool schedulerRunning = false;
+    std::string schedulerOwner;
+    std::uint32_t schedulerIntervalMs = 500;
+    std::string snapshotPath;
+    std::string autoLoadStatus;
 };
 
 } // namespace oscore

@@ -33,8 +33,11 @@ public:
     [[nodiscard]] AllocAlgorithm currentAlgorithm() const;
     [[nodiscard]] std::string currentAlgorithmName() const;
     [[nodiscard]] std::uint32_t totalMemoryKB() const;
+    void setTotalMemoryKB(std::uint32_t totalMemoryKB);
     [[nodiscard]] std::uint32_t usedMemoryKB() const;
     [[nodiscard]] std::uint32_t freeMemoryKB() const;
+    void setAlgorithmDirect(AllocAlgorithm algorithm);
+    bool validateBlocks(std::string& message) const;
 
     [[nodiscard]] std::vector<MemoryBlock> exportBlocks() const;
     void importBlocks(const std::vector<MemoryBlock>& blocks);

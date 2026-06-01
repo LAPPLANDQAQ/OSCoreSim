@@ -44,9 +44,21 @@ public:
     bool reniceProcess(const std::string& owner, std::uint32_t pid, int newPriority, std::string& message);
     bool markSwappedOut(const std::string& owner, std::uint32_t pid, std::string& message);
     bool updateProcessMemoryStart(std::uint32_t pid, std::uint32_t newStart);
+    [[nodiscard]] std::optional<std::uint32_t> pickNextReadyProcess(const std::string& owner);
+    [[nodiscard]] bool removeFromReadyQueues(std::uint32_t pid);
+    [[nodiscard]] bool enqueueReadyProcess(std::uint32_t pid);
+    [[nodiscard]] bool demoteProcess(std::uint32_t pid);
+    [[nodiscard]] bool markRunning(std::uint32_t pid);
+    [[nodiscard]] bool markReady(std::uint32_t pid);
+    [[nodiscard]] bool markTerminated(std::uint32_t pid);
+    [[nodiscard]] bool tickProcess(std::uint32_t pid, std::uint32_t ticks, std::string& log);
+    [[nodiscard]] std::optional<PCB> getProcessCopy(std::uint32_t pid) const;
+    [[nodiscard]] std::vector<std::uint32_t> cleanupInvalidReadyQueueEntries(const std::string& owner);
     [[nodiscard]] bool hasProcess(const std::string& owner, std::uint32_t pid) const;
     [[nodiscard]] bool isSwappedOut(const std::string& owner, std::uint32_t pid) const;
     [[nodiscard]] std::uint32_t nextPid() const;
+    [[nodiscard]] static std::uint32_t timeSliceForQueueLevel(int queueLevel);
+    [[nodiscard]] static std::string queueNameForLevel(int queueLevel);
 
     [[nodiscard]] std::string showProcess(const std::string& owner, std::uint32_t pid) const;
     [[nodiscard]] std::string listProcesses(const std::string& owner) const;
@@ -54,8 +66,14 @@ public:
     [[nodiscard]] std::string readyQueueSnapshot(const std::string& owner) const;
     [[nodiscard]] std::size_t processCount(const std::string& owner) const;
 
+    [[nodiscard]] std::uint32_t exportNextPid() const;
+    void importNextPid(std::uint32_t nextPid);
     [[nodiscard]] std::vector<PCB> exportPcbs() const;
     void importPcbs(const std::vector<PCB>& pcbs);
+    [[nodiscard]] std::array<std::vector<std::uint32_t>, 3> exportReadyQueues() const;
+    void importReadyQueues(const std::array<std::vector<std::uint32_t>, 3>& queues);
+    void rebuildParentChildRelationsIfNeeded();
+    bool validateReadyQueues(std::string& message);
 
 private:
     [[nodiscard]] static bool isValidPriority(int priority);

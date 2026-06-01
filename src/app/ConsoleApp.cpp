@@ -17,6 +17,10 @@ int ConsoleApp::run(std::istream& input, std::ostream& output) {
     output << " C++20 / Windows / Course Design\n";
     output << " Type 'help' to show available commands.\n";
     output << "========================================\n";
+    const auto startupMessage = kernel_.startupMessage();
+    if (!startupMessage.empty()) {
+        output << startupMessage << '\n';
+    }
 
     std::string line;
     while (true) {

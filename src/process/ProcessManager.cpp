@@ -323,6 +323,169 @@ bool ProcessManager::markSwappedOut(const std::string& owner, std::uint32_t pid,
     return true;
 }
 
+std::optional<std::uint32_t> ProcessManager::pickNextReadyProcess(const std::string& owner) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 调度器始终从高优先级队列开始扫描；其他用户的 READY 进程会被保留，不能被当前用户调度。
+    for (auto& queue : readyQueues_) {
+        for (auto it = queue.begin(); it != queue.end();) {
+            const auto pid = *it;
+            auto pcbIt = pcbTable_.find(pid);
+            if (pcbIt == pcbTable_.end() || pcbIt->second.state != ProcessState::READY || pcbIt->second.swappedOut) {
+                it = queue.erase(it);
+                continue;
+            }
+            if (pcbIt->second.owner != owner) {
+                ++it;
+                continue;
+            }
+
+            queue.erase(it);
+            return pid;
+        }
+    }
+
+    return std::nullopt;
+}
+
+bool ProcessManager::removeFromReadyQueues(std::uint32_t pid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool removed = false;
+    for (auto& queue : readyQueues_) {
+        const auto oldSize = queue.size();
+        queue.erase(std::remove(queue.begin(), queue.end(), pid), queue.end());
+        removed = removed || oldSize != queue.size();
+    }
+    return removed;
+}
+
+bool ProcessManager::enqueueReadyProcess(std::uint32_t pid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end() || it->second.state != ProcessState::READY || it->second.swappedOut) {
+        return false;
+    }
+
+    enqueueReadyLocked(pid);
+    return true;
+}
+
+bool ProcessManager::demoteProcess(std::uint32_t pid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end()) {
+        return false;
+    }
+
+    auto& pcb = it->second;
+    if (pcb.queueLevel < 2) {
+        ++pcb.queueLevel;
+    }
+    pcb.timeSliceLeft = timeSliceForQueue(pcb.queueLevel);
+    return true;
+}
+
+bool ProcessManager::markRunning(std::uint32_t pid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end() || it->second.state != ProcessState::READY || it->second.swappedOut) {
+        return false;
+    }
+
+    removeFromReadyQueuesLocked(pid);
+    it->second.state = ProcessState::RUNNING;
+    if (it->second.timeSliceLeft == 0) {
+        it->second.timeSliceLeft = timeSliceForQueue(it->second.queueLevel);
+    }
+    return true;
+}
+
+bool ProcessManager::markReady(std::uint32_t pid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end() ||
+        it->second.state == ProcessState::TERMINATED ||
+        it->second.state == ProcessState::SWAPPED ||
+        it->second.swappedOut) {
+        return false;
+    }
+
+    it->second.state = ProcessState::READY;
+    if (it->second.timeSliceLeft == 0) {
+        it->second.timeSliceLeft = timeSliceForQueue(it->second.queueLevel);
+    }
+    return true;
+}
+
+bool ProcessManager::markTerminated(std::uint32_t pid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end()) {
+        return false;
+    }
+
+    removeFromReadyQueuesLocked(pid);
+    it->second.state = ProcessState::TERMINATED;
+    return true;
+}
+
+bool ProcessManager::tickProcess(std::uint32_t pid, std::uint32_t ticks, std::string& log) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end() || it->second.state != ProcessState::RUNNING || ticks == 0) {
+        log = "Tick failed: PID does not exist or is not RUNNING.";
+        return false;
+    }
+
+    auto& pcb = it->second;
+    std::ostringstream output;
+    // 每个 tick 只推进 1 个时间单位，便于课程演示观察执行时间和剩余时间的变化。
+    for (std::uint32_t tick = 1; tick <= ticks && pcb.remainingTime > 0; ++tick) {
+        ++pcb.executedTime;
+        --pcb.remainingTime;
+        if (pcb.timeSliceLeft > 0) {
+            --pcb.timeSliceLeft;
+        }
+        output << "tick " << tick << '/' << ticks
+               << ": PID=" << pid
+               << " executed=" << pcb.executedTime << '/' << pcb.totalTime
+               << ", remaining=" << pcb.remainingTime << '\n';
+    }
+
+    log = output.str();
+    if (!log.empty() && log.back() == '\n') {
+        log.pop_back();
+    }
+    return true;
+}
+
+std::optional<PCB> ProcessManager::getProcessCopy(std::uint32_t pid) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pcbTable_.find(pid);
+    if (it == pcbTable_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+std::vector<std::uint32_t> ProcessManager::cleanupInvalidReadyQueueEntries(const std::string& owner) {
+    (void)owner;
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::uint32_t> removed;
+    for (auto& queue : readyQueues_) {
+        for (auto it = queue.begin(); it != queue.end();) {
+            auto pcbIt = pcbTable_.find(*it);
+            if (pcbIt == pcbTable_.end() || pcbIt->second.state != ProcessState::READY || pcbIt->second.swappedOut) {
+                removed.push_back(*it);
+                it = queue.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    return removed;
+}
+
 bool ProcessManager::updateProcessMemoryStart(std::uint32_t pid, std::uint32_t newStart) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
@@ -347,6 +510,14 @@ bool ProcessManager::isSwappedOut(const std::string& owner, std::uint32_t pid) c
 std::uint32_t ProcessManager::nextPid() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return nextPid_;
+}
+
+std::uint32_t ProcessManager::timeSliceForQueueLevel(int queueLevel) {
+    return timeSliceForQueue(queueLevel);
+}
+
+std::string ProcessManager::queueNameForLevel(int queueLevel) {
+    return queueName(queueLevel);
 }
 
 std::string ProcessManager::showProcess(const std::string& owner, std::uint32_t pid) const {
@@ -493,6 +664,16 @@ std::size_t ProcessManager::processCount(const std::string& owner) const {
     }));
 }
 
+std::uint32_t ProcessManager::exportNextPid() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return nextPid_;
+}
+
+void ProcessManager::importNextPid(std::uint32_t nextPid) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    nextPid_ = std::max<std::uint32_t>(nextPid, 1);
+}
+
 std::vector<PCB> ProcessManager::exportPcbs() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<PCB> pcbs;
@@ -524,6 +705,78 @@ void ProcessManager::importPcbs(const std::vector<PCB>& pcbs) {
             readyQueues_[static_cast<std::size_t>(pcb.queueLevel)].push_back(pid);
         }
     }
+}
+
+std::array<std::vector<std::uint32_t>, 3> ProcessManager::exportReadyQueues() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::array<std::vector<std::uint32_t>, 3> queues;
+    for (std::size_t i = 0; i < readyQueues_.size(); ++i) {
+        queues[i].assign(readyQueues_[i].begin(), readyQueues_[i].end());
+    }
+    return queues;
+}
+
+void ProcessManager::importReadyQueues(const std::array<std::vector<std::uint32_t>, 3>& queues) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (std::size_t i = 0; i < readyQueues_.size(); ++i) {
+        readyQueues_[i].clear();
+        readyQueues_[i].insert(readyQueues_[i].end(), queues[i].begin(), queues[i].end());
+    }
+}
+
+void ProcessManager::rebuildParentChildRelationsIfNeeded() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [_, pcb] : pcbTable_) {
+        pcb.children.clear();
+    }
+
+    // 载入快照后以 ppid 为准重建 children，避免损坏文件留下悬挂的子进程引用。
+    for (const auto& [pid, pcb] : pcbTable_) {
+        if (pcb.ppid == 0) {
+            continue;
+        }
+        auto parent = pcbTable_.find(pcb.ppid);
+        if (parent != pcbTable_.end() && parent->second.owner == pcb.owner) {
+            parent->second.children.push_back(pid);
+        }
+    }
+
+    for (auto& [_, pcb] : pcbTable_) {
+        std::sort(pcb.children.begin(), pcb.children.end());
+        pcb.children.erase(std::unique(pcb.children.begin(), pcb.children.end()), pcb.children.end());
+    }
+}
+
+bool ProcessManager::validateReadyQueues(std::string& message) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::unordered_set<std::uint32_t> seen;
+    std::size_t removed = 0;
+    for (std::size_t q = 0; q < readyQueues_.size(); ++q) {
+        auto& queue = readyQueues_[q];
+        for (auto it = queue.begin(); it != queue.end();) {
+            auto pcbIt = pcbTable_.find(*it);
+            const bool invalid =
+                pcbIt == pcbTable_.end() ||
+                pcbIt->second.state != ProcessState::READY ||
+                pcbIt->second.swappedOut ||
+                pcbIt->second.queueLevel != static_cast<int>(q) ||
+                seen.find(*it) != seen.end();
+            if (invalid) {
+                it = queue.erase(it);
+                ++removed;
+            } else {
+                seen.insert(*it);
+                ++it;
+            }
+        }
+    }
+
+    if (removed == 0) {
+        message = "Ready queue validation passed.";
+    } else {
+        message = "Ready queue validation repaired " + std::to_string(removed) + " invalid entries.";
+    }
+    return true;
 }
 
 bool ProcessManager::isValidPriority(int priority) {

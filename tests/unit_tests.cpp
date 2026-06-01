@@ -2,16 +2,29 @@
 #include "kernel/CommandDispatcher.h"
 #include "kernel/Kernel.h"
 #include "memory/MemoryManager.h"
+#include "persistence/SnapshotStore.h"
 #include "process/ProcessManager.h"
+#include "process/Scheduler.h"
 #include "util/BlockingQueue.h"
 
 #include <cassert>
+#include <chrono>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 int main() {
+    const std::filesystem::path testSnapshot = "data/unit_test_state.bin";
+    const std::filesystem::path testSnapshotTmp = "data/unit_test_state.tmp";
+    std::error_code cleanupError;
+    std::filesystem::remove(testSnapshot, cleanupError);
+    std::filesystem::remove(testSnapshotTmp, cleanupError);
+
+    oscore::SnapshotStore store(testSnapshot.string());
+    assert(store.defaultPath() == testSnapshot.string());
+
     oscore::CommandDispatcher dispatcher;
     const auto command = dispatcher.parse("  create_pcb   worker 64  0 20 ");
 
@@ -134,7 +147,35 @@ int main() {
     assert(compactResult.success);
     assert(compactResult.pidNewStart.at(2) == 0);
 
-    oscore::Kernel kernel;
+    oscore::ProcessManager schedProcesses;
+    oscore::MemoryManager schedMemory;
+    oscore::Scheduler scheduler;
+    std::uint32_t schedAddr = 0;
+    std::uint32_t schedPid = 0;
+    assert(schedMemory.allocateForProcess("alice", 1, "p1", 64, schedAddr, message));
+    assert(schedProcesses.createProcessWithMemory("alice", "p1", 64, schedAddr, 0, 5, std::nullopt, schedPid, message));
+    assert(schedPid == 1);
+    assert(schedMemory.allocateForProcess("alice", 2, "p2", 64, schedAddr, message));
+    assert(schedProcesses.createProcessWithMemory("alice", "p2", 64, schedAddr, 8, 10, std::nullopt, schedPid, message));
+    assert(schedPid == 2);
+    const auto stepLog = scheduler.step("alice", schedProcesses, schedMemory);
+    assert(stepLog.find("=== Scheduler Step ===") != std::string::npos);
+    assert(stepLog.find("Selected PID=1") != std::string::npos);
+    assert(stepLog.find("tick 1/2") != std::string::npos);
+    assert(stepLog.find("Demote: Q0 -> Q1") != std::string::npos);
+    assert(schedProcesses.showProcess("alice", 1).find("CPU Time: 2 / 5") != std::string::npos);
+    assert(schedProcesses.readyQueueSnapshot("alice").find("Q1: 1") != std::string::npos);
+
+    oscore::ProcessManager finishProcesses;
+    oscore::MemoryManager finishMemory;
+    assert(finishMemory.allocateForProcess("alice", 1, "short", 64, schedAddr, message));
+    assert(finishProcesses.createProcessWithMemory("alice", "short", 64, schedAddr, 0, 1, std::nullopt, schedPid, message));
+    const auto finishLog = scheduler.step("alice", finishProcesses, finishMemory);
+    assert(finishLog.find("completed") != std::string::npos);
+    assert(finishProcesses.listProcesses("alice").find("No process found") != std::string::npos);
+    assert(finishMemory.usedMemoryKB() == 0);
+
+    oscore::Kernel kernel(testSnapshot.string());
     kernel.start();
 
     const auto help = kernel.submitCommand("help");
@@ -148,7 +189,8 @@ int main() {
 
     const auto save = kernel.submitCommand("save");
     assert(save.success);
-    assert(save.message == "[TODO] binary save will be implemented in persistence phase");
+    assert(save.message.find("System state saved") != std::string::npos);
+    assert(std::filesystem::exists(testSnapshot));
 
     const auto whoamiBeforeLogin = kernel.submitCommand("whoami");
     assert(whoamiBeforeLogin.success);
@@ -178,6 +220,10 @@ int main() {
     assert(!createWithoutLogin.success);
     assert(createWithoutLogin.message.find("requires login") != std::string::npos);
 
+    const auto stepWithoutLogin = kernel.submitCommand("step");
+    assert(!stepWithoutLogin.success);
+    assert(stepWithoutLogin.message.find("requires login") != std::string::npos);
+
     const auto showMemWithoutLogin = kernel.submitCommand("show_mem");
     assert(!showMemWithoutLogin.success);
     assert(showMemWithoutLogin.message.find("requires login") != std::string::npos);
@@ -202,6 +248,10 @@ int main() {
     assert(readyq.success);
     assert(readyq.message.find("Q0: 1") != std::string::npos);
     assert(readyq.message.find("Q1: 2") != std::string::npos);
+    const auto schedStep = kernel.submitCommand("step");
+    assert(schedStep.success);
+    assert(schedStep.message.find("=== Scheduler Step ===") != std::string::npos);
+    assert(schedStep.message.find("Selected PID=1") != std::string::npos);
     const auto blockShell = kernel.submitCommand("block_pcb 2");
     assert(blockShell.success);
     assert(kernel.submitCommand("wakeup_pcb 2").success);
@@ -216,7 +266,49 @@ int main() {
     assert(kernel.submitCommand("pgfault 1").message.find("[PAGE FAULT] PID=1") != std::string::npos);
     assert(kernel.submitCommand("kill_pcb 1").success);
     assert(kernel.submitCommand("show_mem").message.find("FREE") != std::string::npos);
+
+    assert(kernel.submitCommand("create_pcb auto 64 0 3").success);
+    const auto startSched = kernel.submitCommand("start_sched");
+    assert(startSched.success);
+    assert(startSched.message.find("started") != std::string::npos);
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    const auto autoStatus = kernel.submitCommand("status");
+    assert(autoStatus.success);
+    assert(autoStatus.message.find("Scheduler: RUNNING") != std::string::npos);
+    const auto stopSched = kernel.submitCommand("stop_sched");
+    assert(stopSched.success);
+    assert(stopSched.message.find("stopped") != std::string::npos);
     assert(kernel.submitCommand("logout").success);
+
+    assert(kernel.submitCommand("login dave pw").success);
+    assert(kernel.submitCommand("create_pcb persisted 64 0 9").success);
+    assert(kernel.submitCommand("set_alloc_algo BF").success);
+    const auto saveSnapshot = kernel.submitCommand("save");
+    assert(saveSnapshot.success);
+    assert(saveSnapshot.message.find("Processes:") != std::string::npos);
+    assert(kernel.submitCommand("create_pcb temp 64 0 5").success);
+    assert(kernel.submitCommand("list_pcb").message.find("temp") != std::string::npos);
+    const auto loadSnapshot = kernel.submitCommand("load");
+    assert(loadSnapshot.success);
+    assert(loadSnapshot.message.find("Please login again") != std::string::npos);
+    assert(kernel.submitCommand("whoami").message == "not logged in");
+    assert(kernel.submitCommand("login dave pw").success);
+    const auto restoredList = kernel.submitCommand("list_pcb");
+    assert(restoredList.success);
+    assert(restoredList.message.find("temp") == std::string::npos);
+    assert(kernel.submitCommand("status").message.find("Snapshot File: data/unit_test_state.bin") != std::string::npos);
+    assert(kernel.submitCommand("logout").success);
+
+    oscore::Kernel reloadedKernel(testSnapshot.string());
+    reloadedKernel.start();
+    const auto reloadStatus = reloadedKernel.submitCommand("status");
+    assert(reloadStatus.success);
+    assert(reloadStatus.message.find("Auto Load: success") != std::string::npos);
+    assert(reloadedKernel.submitCommand("whoami").message == "not logged in");
+    assert(reloadedKernel.submitCommand("login dave pw").success);
+    assert(reloadedKernel.submitCommand("list_pcb").message.find("persisted") != std::string::npos);
+    assert(reloadedKernel.submitCommand("status").message.find("Allocation Algorithm: BEST_FIT") != std::string::npos);
+    reloadedKernel.stop();
 
     const auto unknown = kernel.submitCommand("unknown_command");
     assert(!unknown.success);
