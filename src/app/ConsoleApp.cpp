@@ -10,27 +10,37 @@ int ConsoleApp::run() {
 }
 
 int ConsoleApp::run(std::istream& input, std::ostream& output) {
-    output << "Persistent OS Core Simulator\n";
-    output << "Type 'help' for commands or 'exit' to quit.\n";
+    kernel_.start();
+
+    output << "========================================\n";
+    output << " Persistent OS Core Simulator\n";
+    output << " C++20 / Windows / Course Design\n";
+    output << " Type 'help' to show available commands.\n";
+    output << "========================================\n";
 
     std::string line;
     while (true) {
-        output << "os_sim> ";
+        output << "OS-SIM> ";
         if (!std::getline(input, line)) {
             output << '\n';
             break;
         }
 
-        const auto command = dispatcher_.parse(line);
-        const auto result = kernel_.execute(command);
-        if (!result.output.empty()) {
-            output << result.output << '\n';
+        if (line.find_first_not_of(" \t\r\n") == std::string::npos) {
+            continue;
         }
-        if (result.shouldExit) {
+
+        // 前台线程只负责读取输入并提交请求，真正执行统一交给 Kernel 后台线程。
+        const auto response = kernel_.submitCommand(line);
+        if (!response.message.empty()) {
+            output << response.message << '\n';
+        }
+        if (response.shouldExit) {
             break;
         }
     }
 
+    kernel_.stop();
     return 0;
 }
 

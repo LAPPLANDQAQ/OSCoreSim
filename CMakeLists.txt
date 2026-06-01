@@ -8,10 +8,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
 
-set(OS_SIM_SOURCES
-    src/app/ConsoleApp.cpp
+set(OS_SIM_CORE_SOURCES
     src/kernel/Kernel.cpp
     src/kernel/CommandDispatcher.cpp
+    src/auth/UserManager.cpp
+)
+
+set(OS_SIM_SOURCES
+    src/app/ConsoleApp.cpp
+    ${OS_SIM_CORE_SOURCES}
     src/process/ProcessManager.cpp
     src/process/Scheduler.cpp
     src/memory/MemoryManager.cpp
@@ -33,12 +38,17 @@ target_include_directories(os_sim PRIVATE
 
 add_executable(os_sim_tests
     tests/unit_tests.cpp
-    src/kernel/CommandDispatcher.cpp
+    ${OS_SIM_CORE_SOURCES}
 )
 
 target_include_directories(os_sim_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+if(MSVC)
+    target_compile_options(os_sim PRIVATE /utf-8)
+    target_compile_options(os_sim_tests PRIVATE /utf-8)
+endif()
 
 if(BUILD_TESTING)
     add_test(NAME os_sim_tests COMMAND os_sim_tests)

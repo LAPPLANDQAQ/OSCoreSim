@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -14,26 +15,35 @@ public:
     void push(T value) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (closed_) {
-                throw std::runtime_error("cannot push to a closed BlockingQueue");
+            if (shutdownRequested_) {
+                throw std::runtime_error("cannot push to a shutdown BlockingQueue");
             }
             values_.push_back(std::move(value));
         }
         condition_.notify_one();
     }
 
-    T pop() {
+    bool pop(T& value) {
         std::unique_lock<std::mutex> lock(mutex_);
+        // 队列为空时阻塞；shutdown 后唤醒所有等待线程，便于后台线程安全退出。
         condition_.wait(lock, [this] {
-            return closed_ || !values_.empty();
+            return shutdownRequested_ || !values_.empty();
         });
 
         if (values_.empty()) {
-            throw std::runtime_error("BlockingQueue is closed");
+            return false;
         }
 
-        T value = std::move(values_.front());
+        value = std::move(values_.front());
         values_.pop_front();
+        return true;
+    }
+
+    T pop() {
+        T value;
+        if (!pop(value)) {
+            throw std::runtime_error("BlockingQueue is shutdown");
+        }
         return value;
     }
 
@@ -48,12 +58,23 @@ public:
         return true;
     }
 
-    void close() {
+    void shutdown() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            closed_ = true;
+            shutdownRequested_ = true;
         }
         condition_.notify_all();
+    }
+
+    void reset() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        values_.clear();
+        shutdownRequested_ = false;
+    }
+
+    [[nodiscard]] bool isShutdown() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return shutdownRequested_;
     }
 
     [[nodiscard]] bool empty() const {
@@ -65,7 +86,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable condition_;
     std::deque<T> values_;
-    bool closed_ = false;
+    bool shutdownRequested_ = false;
 };
 
 } // namespace oscore

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "kernel/CommandDispatcher.h"
 #include "kernel/Kernel.h"
 
 #include <iosfwd>
@@ -13,7 +12,6 @@ public:
     int run(std::istream& input, std::ostream& output);
 
 private:
-    CommandDispatcher dispatcher_;
     Kernel kernel_;
 };
 

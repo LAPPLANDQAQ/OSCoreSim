@@ -1,4 +1,22 @@
 # Initial skeleton demo
 help
+status
+whoami
+register alice 123456
+register alice 999999
+login alice wrong1
+login alice wrong2
+login alice wrong3
+login alice 123456
+register bob abc
+login bob wrong
+login bob abc
+whoami
+status
+logout
+whoami
+save
+load
 unknown_command
+clear
 exit
