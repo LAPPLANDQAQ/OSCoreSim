@@ -21,6 +21,7 @@ set(OS_SIM_CORE_SOURCES
 set(OS_SIM_SOURCES
     src/app/ConsoleApp.cpp
     ${OS_SIM_CORE_SOURCES}
+    src/view/OverviewRenderer.cpp
     src/ipc/NamedPipeServer.cpp
     src/ipc/NamedPipeClient.cpp
     src/vfs/VirtualFileSystem.cpp
@@ -37,6 +38,7 @@ target_include_directories(os_sim PRIVATE
 
 add_executable(os_sim_tests
     tests/unit_tests.cpp
+    src/view/OverviewRenderer.cpp
     ${OS_SIM_CORE_SOURCES}
 )
 

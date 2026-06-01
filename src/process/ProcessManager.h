@@ -56,6 +56,7 @@ public:
     [[nodiscard]] std::vector<std::uint32_t> cleanupInvalidReadyQueueEntries(const std::string& owner);
     [[nodiscard]] bool hasProcess(const std::string& owner, std::uint32_t pid) const;
     [[nodiscard]] bool isSwappedOut(const std::string& owner, std::uint32_t pid) const;
+    [[nodiscard]] std::vector<PCB> getProcessCopiesForUser(const std::string& owner) const;
     [[nodiscard]] std::uint32_t nextPid() const;
     [[nodiscard]] static std::uint32_t timeSliceForQueueLevel(int queueLevel);
     [[nodiscard]] static std::string queueNameForLevel(int queueLevel);

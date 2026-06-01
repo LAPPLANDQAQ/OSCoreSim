@@ -507,6 +507,22 @@ bool ProcessManager::isSwappedOut(const std::string& owner, std::uint32_t pid) c
     return it != pcbTable_.end() && it->second.owner == owner && it->second.swappedOut;
 }
 
+std::vector<PCB> ProcessManager::getProcessCopiesForUser(const std::string& owner) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<PCB> copies;
+    copies.reserve(pcbTable_.size());
+    for (const auto& [_, pcb] : pcbTable_) {
+        if (pcb.owner == owner) {
+            copies.push_back(pcb);
+        }
+    }
+    // 按 PID 升序排列，方便 overview 进程树构建
+    std::sort(copies.begin(), copies.end(), [](const PCB& left, const PCB& right) {
+        return left.pid < right.pid;
+    });
+    return copies;
+}
+
 std::uint32_t ProcessManager::nextPid() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return nextPid_;

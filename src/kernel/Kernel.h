@@ -8,6 +8,7 @@
 #include "process/ProcessManager.h"
 #include "process/Scheduler.h"
 #include "util/BlockingQueue.h"
+#include "view/OverviewRenderer.h"
 
 #include <atomic>
 #include <cstdint>
@@ -46,8 +47,10 @@ private:
     [[nodiscard]] CommandResponse executeRequest(const CommandRequest& request);
     [[nodiscard]] bool isSchedulerCommand(const std::string& name) const;
     [[nodiscard]] bool isPersistenceCommand(const std::string& name) const;
+    [[nodiscard]] bool isVisualizationCommand(const std::string& name) const;
     [[nodiscard]] CommandResponse handleSchedulerCommand(const Command& command, const CommandContext& context);
     [[nodiscard]] CommandResponse handlePersistenceCommand(const Command& command);
+    [[nodiscard]] CommandResponse handleOverview(const Command& command);
     [[nodiscard]] KernelSnapshot exportSnapshotLocked() const;
     bool importSnapshotLocked(const KernelSnapshot& snapshot, std::string& message);
     void resetStateLocked();
@@ -65,6 +68,7 @@ private:
     MemoryManager memoryManager_;
     Scheduler scheduler_;
     SnapshotStore snapshotStore_;
+    OverviewRenderer overviewRenderer_;
     std::uint64_t nextRequestId_ = 1;
     std::atomic<bool> schedulerRunning_{false};
     std::atomic<bool> shuttingDown_{false};

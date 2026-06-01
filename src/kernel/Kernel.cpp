@@ -222,6 +222,8 @@ CommandResponse Kernel::executeRequest(const CommandRequest& request) {
             response = handleSchedulerCommand(command, context);
         } else if (isPersistenceCommand(command.name)) {
             response = handlePersistenceCommand(command);
+        } else if (isVisualizationCommand(command.name)) {
+            response = handleOverview(command);
         } else {
             response = dispatcher_.dispatch(command, context, userManager_, processManager_, memoryManager_);
         }
@@ -248,6 +250,10 @@ bool Kernel::isSchedulerCommand(const std::string& name) const {
 
 bool Kernel::isPersistenceCommand(const std::string& name) const {
     return name == "save" || name == "load";
+}
+
+bool Kernel::isVisualizationCommand(const std::string& name) const {
+    return name == "overview";
 }
 
 CommandResponse Kernel::handleSchedulerCommand(const Command& command, const CommandContext& context) {
@@ -360,6 +366,45 @@ CommandResponse Kernel::handlePersistenceCommand(const Command& command) {
     }
 
     return {false, "Unknown persistence command.", false};
+}
+
+CommandResponse Kernel::handleOverview(const Command& command) {
+    // overview 是只读可视化命令，必须要求用户登录
+    if (!userManager_.isLoggedIn()) {
+        return {false, "[ERROR] Please login before using overview.", false};
+    }
+
+    if (!command.arguments.empty()) {
+        return {false, "Usage: overview", false};
+    }
+
+    // stateMutex_ 已在 executeRequest() 中锁定，此时处于锁保护期间
+    const auto currentUser = userManager_.currentUser();
+
+    // 获取 ProcessManager 和 MemoryManager 的只读快照
+    const auto userProcesses = processManager_.getProcessCopiesForUser(currentUser);
+    const auto readyQueues = processManager_.exportReadyQueues();
+    const auto memoryBlocks = memoryManager_.exportBlocks();
+    const auto totalMemKB = memoryManager_.totalMemoryKB();
+
+    // 构建调度器信息
+    OverviewRenderer::SchedulerInfo schedulerInfo;
+    schedulerInfo.running = schedulerRunning_.load();
+    schedulerInfo.owner = schedulerOwner_;
+    schedulerInfo.intervalMs = static_cast<int>(schedulerIntervalMs_);
+
+    // 渲染 overview 输出
+    const auto output = overviewRenderer_.render(
+        currentUser,
+        userProcesses,
+        readyQueues,
+        memoryBlocks,
+        totalMemKB,
+        schedulerInfo,
+        snapshotStore_.defaultPath(),
+        memoryManager_.currentAlgorithmName());
+
+    return {true, output, false};
 }
 
 KernelSnapshot Kernel::exportSnapshotLocked() const {

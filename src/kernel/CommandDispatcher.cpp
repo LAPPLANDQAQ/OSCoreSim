@@ -479,6 +479,10 @@ std::string CommandDispatcher::helpText() const {
            << "  restart_sched   Restart automatic scheduler\n"
            << "  step            Execute one scheduling step and print decision details\n"
            << "\n"
+           << "\n"
+           << "Visualization commands:\n"
+           << "  overview    Show process tree, memory map, MLFQ queues, and system summary\n"
+           << "\n"
            << "OS feature commands for VFS, persistence, and IPC will be added later.";
     return output.str();
 }
