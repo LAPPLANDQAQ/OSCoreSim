@@ -483,6 +483,13 @@ std::string CommandDispatcher::helpText() const {
            << "Visualization commands:\n"
            << "  overview    Show process tree, memory map, MLFQ queues, and system summary\n"
            << "\n"
+           << "Virtual file commands:\n"
+           << "  touch_file <name>             Create an empty virtual file\n"
+           << "  write_file <name> <content>   Write content to a virtual file\n"
+           << "  read_file <name>              Read a virtual file\n"
+           << "  ls_file                       List current user's virtual files\n"
+           << "  rm_file <name>                Remove a virtual file\n"
+           << "\n"
            << "OS feature commands for VFS, persistence, and IPC will be added later.";
     return output.str();
 }

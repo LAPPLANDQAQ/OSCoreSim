@@ -40,6 +40,7 @@ target_include_directories(os_sim PRIVATE
 add_executable(os_sim_tests
     tests/unit_tests.cpp
     src/view/OverviewRenderer.cpp
+    src/vfs/VirtualFileSystem.cpp
     ${OS_SIM_CORE_SOURCES}
 )
 

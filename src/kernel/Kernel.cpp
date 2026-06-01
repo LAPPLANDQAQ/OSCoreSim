@@ -224,6 +224,8 @@ CommandResponse Kernel::executeRequest(const CommandRequest& request) {
             response = handlePersistenceCommand(command);
         } else if (isVisualizationCommand(command.name)) {
             response = handleOverview(command);
+        } else if (isVfsCommand(command.name)) {
+            response = handleVfsCommand(command);
         } else {
             response = dispatcher_.dispatch(command, context, userManager_, processManager_, memoryManager_);
         }
@@ -407,6 +409,73 @@ CommandResponse Kernel::handleOverview(const Command& command) {
     return {true, output, false};
 }
 
+CommandResponse Kernel::handleVfsCommand(const Command& command) {
+    // 所有 VFS 命令要求登录
+    if (!userManager_.isLoggedIn()) {
+        return {false, "This command requires login. Please run: login <username> <password>", false};
+    }
+
+    const auto owner = userManager_.currentUser();
+
+    if (command.name == "touch_file") {
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: touch_file <name>", false};
+        }
+        std::string message;
+        const bool ok = vfs_.createFile(owner, command.arguments[0], message);
+        return {ok, message, false};
+    }
+
+    if (command.name == "write_file") {
+        if (command.arguments.size() < 2) {
+            return {false, "Usage: write_file <name> <content>", false};
+        }
+        // 文件名是第一个参数，剩余所有参数拼接为文件内容
+        const auto& name = command.arguments[0];
+        std::string content;
+        for (std::size_t i = 1; i < command.arguments.size(); ++i) {
+            if (i > 1) content += ' ';
+            content += command.arguments[i];
+        }
+        std::string message;
+        const bool ok = vfs_.writeFile(owner, name, content, message);
+        return {ok, message, false};
+    }
+
+    if (command.name == "read_file") {
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: read_file <name>", false};
+        }
+        return {true, vfs_.readFile(owner, command.arguments[0]), false};
+    }
+
+    if (command.name == "ls_file") {
+        if (!command.arguments.empty()) {
+            return {false, "Usage: ls_file", false};
+        }
+        return {true, vfs_.listFiles(owner), false};
+    }
+
+    if (command.name == "rm_file") {
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: rm_file <name>", false};
+        }
+        std::string message;
+        const bool ok = vfs_.deleteFile(owner, command.arguments[0], message);
+        return {ok, message, false};
+    }
+
+    return {false, "Unknown VFS command.", false};
+}
+
+bool Kernel::isVfsCommand(const std::string& name) const {
+    return name == "touch_file" ||
+           name == "write_file" ||
+           name == "read_file" ||
+           name == "ls_file" ||
+           name == "rm_file";
+}
+
 KernelSnapshot Kernel::exportSnapshotLocked() const {
     KernelSnapshot snapshot;
     snapshot.users = userManager_.exportUsers();
@@ -418,6 +487,9 @@ KernelSnapshot Kernel::exportSnapshotLocked() const {
     snapshot.allocAlgorithm = memoryManager_.currentAlgorithm();
     snapshot.schedulerRunning = schedulerRunning_.load();
     snapshot.schedulerOwner = schedulerOwner_;
+    // P9 VFS 导出
+    snapshot.nextFileId = vfs_.exportNextFileId();
+    snapshot.virtualFiles = vfs_.exportFiles();
     return snapshot;
 }
 
@@ -450,6 +522,10 @@ bool Kernel::importSnapshotLocked(const KernelSnapshot& snapshot, std::string& m
         return false;
     }
 
+    // P9 VFS 导入
+    vfs_.importNextFileId(snapshot.nextFileId);
+    vfs_.importFiles(snapshot.virtualFiles);
+
     autoLoadStatus_ = "manual load success";
     message = queueMessage;
     return true;
@@ -463,6 +539,9 @@ void Kernel::resetStateLocked() {
     processManager_.importReadyQueues({});
     memoryManager_.setTotalMemoryKB(1024);
     memoryManager_.setAlgorithmDirect(AllocAlgorithm::FIRST_FIT);
+    // P9 VFS 重置
+    vfs_.importNextFileId(1);
+    vfs_.importFiles({});
     memoryManager_.importBlocks({MemoryBlock{0, 1024, MemoryBlockType::FREE, 0, "", ""}});
     schedulerRunning_.store(false);
     scheduler_.setRunning(false);

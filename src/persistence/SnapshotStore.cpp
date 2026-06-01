@@ -13,7 +13,8 @@ namespace oscore {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'O', 'S', 'S', 'M', '2', '0', '2', '6'};
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kVersionV1 = 1;
+constexpr std::uint32_t kVersionV2 = 2;
 constexpr std::uint32_t kHeaderSize = 20;
 constexpr std::uint32_t kFlags = 0;
 constexpr std::uint32_t kMaxStringLength = 1024 * 1024;
@@ -31,6 +32,10 @@ public:
     }
 
     void writeUint32(std::uint32_t value) {
+        writeBytes(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+
+    void writeUint64(std::uint64_t value) {
         writeBytes(reinterpret_cast<const char*>(&value), sizeof(value));
     }
 
@@ -74,6 +79,12 @@ public:
         return value;
     }
 
+    [[nodiscard]] std::uint64_t readUint64() {
+        std::uint64_t value = 0;
+        readBytes(reinterpret_cast<char*>(&value), sizeof(value));
+        return value;
+    }
+
     [[nodiscard]] std::int32_t readInt32() {
         std::int32_t value = 0;
         readBytes(reinterpret_cast<char*>(&value), sizeof(value));
@@ -107,12 +118,13 @@ private:
 
 void writeHeader(BinaryWriter& writer) {
     writer.writeBytes(kMagic.data(), kMagic.size());
-    writer.writeUint32(kVersion);
+    writer.writeUint32(kSnapshotVersion);  // 当前版本 = 2
     writer.writeUint32(kHeaderSize);
     writer.writeUint32(kFlags);
 }
 
-void readHeader(BinaryReader& reader) {
+// 读取文件头，返回解析到的版本号（1 或 2），失败时抛异常
+[[nodiscard]] std::uint32_t readHeader(BinaryReader& reader) {
     std::array<char, 8> magic{};
     reader.readBytes(magic.data(), magic.size());
     if (magic != kMagic) {
@@ -120,7 +132,8 @@ void readHeader(BinaryReader& reader) {
     }
 
     const auto version = reader.readUint32();
-    if (version != kVersion) {
+    // 兼容版本 1 和版本 2
+    if (version != kVersionV1 && version != kVersionV2) {
         throw std::runtime_error("unsupported version");
     }
 
@@ -129,7 +142,30 @@ void readHeader(BinaryReader& reader) {
         throw std::runtime_error("invalid header size");
     }
 
-    (void)reader.readUint32();
+    (void)reader.readUint32();  // flags，当前未使用
+    return version;
+}
+
+// === VFS 二进制序列化 ===
+
+void writeVirtualFile(BinaryWriter& writer, const VirtualFile& file) {
+    writer.writeUint32(file.fileId);
+    writer.writeString(file.owner);
+    writer.writeString(file.name);
+    writer.writeString(file.content);
+    writer.writeUint64(static_cast<std::uint64_t>(file.createdAt));
+    writer.writeUint64(static_cast<std::uint64_t>(file.modifiedAt));
+}
+
+VirtualFile readVirtualFile(BinaryReader& reader) {
+    VirtualFile file;
+    file.fileId = reader.readUint32();
+    file.owner = reader.readString();
+    file.name = reader.readString();
+    file.content = reader.readString();
+    file.createdAt = reader.readUint64();
+    file.modifiedAt = reader.readUint64();
+    return file;
 }
 
 void writeUser(BinaryWriter& writer, const UserAccount& account) {
@@ -310,6 +346,14 @@ bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) c
 
             writer.writeBool(snapshot.schedulerRunning);
             writer.writeString(snapshot.schedulerOwner);
+
+            // P9 VFS 数据：写入 nextFileId 和所有虚拟文件
+            writer.writeUint32(snapshot.nextFileId);
+            writer.writeUint32(static_cast<std::uint32_t>(snapshot.virtualFiles.size()));
+            for (const auto& file : snapshot.virtualFiles) {
+                writeVirtualFile(writer, file);
+            }
+
             output.flush();
             if (!output) {
                 message = "Save failed: failed to flush snapshot file.";
@@ -342,7 +386,7 @@ bool SnapshotStore::load(KernelSnapshot& snapshot, std::string& message) const {
 
         KernelSnapshot loaded;
         BinaryReader reader(input);
-        readHeader(reader);
+        const auto fileVersion = readHeader(reader);  // 返回 1 或 2
 
         const auto userCount = reader.readUint32();
         if (userCount > kMaxVectorCount) {
@@ -393,6 +437,20 @@ bool SnapshotStore::load(KernelSnapshot& snapshot, std::string& message) const {
 
         loaded.schedulerRunning = reader.readBool();
         loaded.schedulerOwner = reader.readString();
+
+        // P9 VFS 数据：仅在版本 2 快照中读取；版本 1 保持空 VFS
+        if (fileVersion >= 2) {
+            loaded.nextFileId = reader.readUint32();
+            const auto vfsCount = reader.readUint32();
+            if (vfsCount > kMaxVectorCount) {
+                throw std::runtime_error("too many virtual files");
+            }
+            loaded.virtualFiles.reserve(vfsCount);
+            for (std::uint32_t i = 0; i < vfsCount; ++i) {
+                loaded.virtualFiles.push_back(readVirtualFile(reader));
+            }
+        }
+
         snapshot = std::move(loaded);
         return true;
     } catch (const std::exception& ex) {

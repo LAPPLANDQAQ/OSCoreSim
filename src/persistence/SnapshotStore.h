@@ -3,6 +3,7 @@
 #include "auth/UserAccount.h"
 #include "memory/MemoryBlock.h"
 #include "process/PCB.h"
+#include "vfs/VirtualFileSystem.h"
 
 #include <array>
 #include <cstddef>
@@ -11,6 +12,10 @@
 #include <vector>
 
 namespace oscore {
+
+// 快照版本号：版本 2 在末尾增加了 VFS 数据
+// 版本 1 兼容读取：VFS 字段保持默认空值
+constexpr std::uint32_t kSnapshotVersion = 2;
 
 struct KernelSnapshot {
     std::vector<UserAccount> users;
@@ -22,6 +27,9 @@ struct KernelSnapshot {
     AllocAlgorithm allocAlgorithm = AllocAlgorithm::FIRST_FIT;
     bool schedulerRunning = false;
     std::string schedulerOwner;
+    // P9 VFS 字段
+    std::uint32_t nextFileId = 1;
+    std::vector<VirtualFile> virtualFiles;
 };
 
 struct SnapshotSummary {
