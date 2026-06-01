@@ -294,6 +294,7 @@ SnapshotSummary SnapshotStore::summarize(const KernelSnapshot& snapshot) const {
     summary.users = snapshot.users.size();
     summary.processes = snapshot.pcbs.size();
     summary.memoryBlocks = snapshot.memoryBlocks.size();
+    summary.vfsFiles = snapshot.virtualFiles.size();
     for (std::size_t i = 0; i < snapshot.readyQueues.size(); ++i) {
         summary.readyQueueSizes[i] = snapshot.readyQueues[i].size();
     }

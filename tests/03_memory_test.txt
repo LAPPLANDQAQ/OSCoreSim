@@ -1,0 +1,27 @@
+login bob abc
+show_mem
+mem_stat
+alloc 100
+alloc 120
+alloc 80
+show_mem
+mem_stat
+free_mem 0
+show_mem
+mem_stat
+set_alloc_algo BF
+alloc 50
+set_alloc_algo WF
+alloc 30
+show_mem
+compact
+show_mem
+mem_stat
+pgfault
+create_pcb memproc 64 0 10
+show_mem
+swap_out 1
+show_mem
+show_pcb 1
+logout
+exit

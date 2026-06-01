@@ -1,0 +1,15 @@
+login bob abc
+create_pcb init 64 0 20
+create_pcb shell 128 5 12 1
+alloc 100
+step
+overview
+block_pcb 2
+overview
+wakeup_pcb 2
+renice 2 1
+overview
+compact
+overview
+logout
+exit

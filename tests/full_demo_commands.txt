@@ -1,0 +1,87 @@
+help
+status
+whoami
+
+register alice 123456
+register alice 999999
+login alice wrong1
+login alice wrong2
+login alice wrong3
+login alice 123456
+register bob abc
+login bob abc
+whoami
+status
+
+create_pcb init 64 0 20
+create_pcb shell 128 5 12 1
+create_pcb worker 32 8 8 2
+create_pcb logger 32 10 8 1
+list_pcb
+show_pcb 2
+ptree
+readyq
+block_pcb 2
+wakeup_pcb 2
+suspend 3
+resume 3
+renice 4 2
+ptree
+kill_pcb 1
+list_pcb
+ptree
+
+create_pcb memtest 64 0 20
+show_mem
+mem_stat
+alloc 100
+alloc 120
+alloc 80
+show_mem
+mem_stat
+free_mem 64
+show_mem
+mem_stat
+set_alloc_algo BF
+alloc 50
+set_alloc_algo WF
+alloc 30
+show_mem
+compact
+show_mem
+mem_stat
+pgfault 2
+swap_out 2
+show_pcb 2
+show_mem
+
+create_pcb s1 64 0 6
+create_pcb s2 64 5 8
+create_pcb s3 64 10 12
+readyq
+step
+step
+step
+list_pcb
+readyq
+start_sched
+stop_sched
+status
+
+save
+load
+login bob abc
+
+touch_file note.txt
+write_file note.txt hello operating system
+read_file note.txt
+ls_file
+write_file auto.md auto created
+ls_file
+rm_file note.txt
+ls_file
+
+overview
+
+logout
+exit

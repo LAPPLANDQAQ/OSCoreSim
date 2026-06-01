@@ -1,0 +1,16 @@
+login bob abc
+create_pcb persist1 64 0 20
+create_pcb persist2 128 5 12 1
+alloc 100
+write_file note.txt persistent file content
+step
+overview
+save
+exit
+
+# === 重启后手动执行 ===
+# login bob abc
+# overview
+# ls_file
+# read_file note.txt
+# exit

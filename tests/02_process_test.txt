@@ -1,0 +1,32 @@
+# P3 进程管理验收测试
+# 验证: create/kill/block/wakeup/suspend/resume/renice/show/list/ptree/readyq
+# 前置: 01_user_test 已执行
+
+register bob abc
+login bob abc
+create_pcb init 64 0 20
+create_pcb shell 128 5 12 1
+create_pcb worker 32 8 8 2
+create_pcb logger 32 10 8 1
+list_pcb
+show_pcb 2
+ptree
+readyq
+block_pcb 2
+list_pcb
+readyq
+wakeup_pcb 2
+suspend 3
+list_pcb
+readyq
+resume 3
+renice 4 2
+list_pcb
+readyq
+ptree
+kill_pcb 1
+list_pcb
+ptree
+readyq
+logout
+exit

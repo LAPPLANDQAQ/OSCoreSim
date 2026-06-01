@@ -36,6 +36,7 @@ struct SnapshotSummary {
     std::size_t users = 0;
     std::size_t processes = 0;
     std::size_t memoryBlocks = 0;
+    std::size_t vfsFiles = 0;
     std::array<std::size_t, 3> readyQueueSizes{};
 };
 

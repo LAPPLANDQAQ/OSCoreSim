@@ -415,7 +415,8 @@ CommandResponse CommandDispatcher::dispatch(
         return {true, processManager.readyQueueSnapshot(owner), false};
     }
 
-    // TODO(P7+): VFS and IPC commands must also call requireLogin() before touching OS resources.
+    // P8-P9: save/load 和 VFS/overview 命令均由 Kernel 在 executeRequest 中优先路由处理。
+    // CommandDispatcher 仅处理仍在此处分发的通用命令（用户、进程、内存）。
 
     if (command.name == "save") {
         return {false, "Persistence command must be handled by Kernel.", false};

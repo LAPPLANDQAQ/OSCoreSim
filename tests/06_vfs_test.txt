@@ -1,0 +1,18 @@
+# P9 VFS 验收测试
+# 验证: touch_file/write_file/read_file/ls_file/rm_file + 用户隔离
+
+login bob abc
+touch_file note.txt
+write_file note.txt hello operating system
+read_file note.txt
+ls_file
+write_file auto.md auto created content
+ls_file
+rm_file note.txt
+ls_file
+logout
+login bob abc
+ls_file
+read_file auto.md
+logout
+exit

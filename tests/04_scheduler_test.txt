@@ -1,0 +1,18 @@
+login bob abc
+create_pcb s1 64 0 6
+create_pcb s2 64 5 8
+create_pcb s3 64 10 12
+readyq
+step
+step
+step
+list_pcb
+readyq
+start_sched
+stop_sched
+status
+restart_sched
+stop_sched
+overview
+logout
+exit
