@@ -2,6 +2,8 @@
 
 #include "auth/UserManager.h"
 #include "kernel/CommandTypes.h"
+#include "memory/MemoryManager.h"
+#include "process/ProcessManager.h"
 
 #include <string>
 
@@ -13,11 +15,16 @@ public:
     [[nodiscard]] CommandResponse dispatch(
         const Command& command,
         const CommandContext& context,
-        UserManager& userManager) const;
+        UserManager& userManager,
+        ProcessManager& processManager,
+        MemoryManager& memoryManager) const;
 
 private:
     [[nodiscard]] std::string helpText() const;
-    [[nodiscard]] std::string statusText(const CommandContext& context) const;
+    [[nodiscard]] std::string statusText(
+        const CommandContext& context,
+        const ProcessManager& processManager,
+        const MemoryManager& memoryManager) const;
     [[nodiscard]] bool requireLogin(const UserManager& userManager, CommandResponse& response) const;
 };
 

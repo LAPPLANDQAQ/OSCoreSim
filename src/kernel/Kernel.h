@@ -3,6 +3,8 @@
 #include "auth/UserManager.h"
 #include "kernel/CommandDispatcher.h"
 #include "kernel/CommandTypes.h"
+#include "memory/MemoryManager.h"
+#include "process/ProcessManager.h"
 #include "util/BlockingQueue.h"
 
 #include <cstdint>
@@ -41,6 +43,8 @@ private:
     std::thread workerThread_;
     CommandDispatcher dispatcher_;
     UserManager userManager_;
+    ProcessManager processManager_;
+    MemoryManager memoryManager_;
     std::uint64_t nextRequestId_ = 1;
     bool started_ = false;
     bool stopping_ = false;

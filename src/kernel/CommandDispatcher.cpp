@@ -2,10 +2,53 @@
 
 #include "util/StringUtil.h"
 
+#include <charconv>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace oscore {
+
+namespace {
+
+[[nodiscard]] bool parseUint32Strict(const std::string& text, std::uint32_t& value) {
+    if (text.empty()) {
+        return false;
+    }
+
+    unsigned long long parsed = 0;
+    const char* first = text.data();
+    const char* last = text.data() + text.size();
+    const auto result = std::from_chars(first, last, parsed);
+    if (result.ec != std::errc{} || result.ptr != last || parsed > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+
+    value = static_cast<std::uint32_t>(parsed);
+    return true;
+}
+
+[[nodiscard]] bool parseIntStrict(const std::string& text, int& value) {
+    if (text.empty()) {
+        return false;
+    }
+
+    int parsed = 0;
+    const char* first = text.data();
+    const char* last = text.data() + text.size();
+    const auto result = std::from_chars(first, last, parsed);
+    if (result.ec != std::errc{} || result.ptr != last) {
+        return false;
+    }
+
+    value = parsed;
+    return true;
+}
+
+} // namespace
 
 Command CommandDispatcher::parse(const std::string& line) const {
     Command command;
@@ -28,7 +71,9 @@ Command CommandDispatcher::parse(const std::string& line) const {
 CommandResponse CommandDispatcher::dispatch(
     const Command& command,
     const CommandContext& context,
-    UserManager& userManager) const {
+    UserManager& userManager,
+    ProcessManager& processManager,
+    MemoryManager& memoryManager) const {
     if (command.empty()) {
         return {true, "", false};
     }
@@ -47,7 +92,7 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "status") {
-        return {true, statusText(context), false};
+        return {true, statusText(context, processManager, memoryManager), false};
     }
 
     if (command.name == "register") {
@@ -80,7 +125,297 @@ CommandResponse CommandDispatcher::dispatch(
         return {true, userManager.whoami(), false};
     }
 
-    // TODO(P3+): OS resource commands must call requireLogin() before operating PCB, memory, or VFS.
+    if (command.name == "create_pcb") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 4 && command.arguments.size() != 5) {
+            return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+        }
+
+        std::uint32_t memKB = 0;
+        int priority = 0;
+        std::uint32_t totalTime = 0;
+        std::optional<std::uint32_t> ppid;
+        if (!parseUint32Strict(command.arguments[1], memKB) ||
+            !parseIntStrict(command.arguments[2], priority) ||
+            !parseUint32Strict(command.arguments[3], totalTime)) {
+            return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+        }
+        if (command.arguments.size() == 5) {
+            std::uint32_t parsedPpid = 0;
+            if (!parseUint32Strict(command.arguments[4], parsedPpid)) {
+                return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+            }
+            ppid = parsedPpid;
+        }
+
+        if (command.arguments[0].empty() || memKB == 0 || totalTime == 0 || priority < 0 || priority > 15) {
+            return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+        }
+
+        const auto owner = userManager.currentUser();
+        const auto expectedPid = processManager.nextPid();
+        std::uint32_t memStart = 0;
+        std::string memoryMessage;
+        if (!memoryManager.allocateForProcess(owner, expectedPid, command.arguments[0], memKB, memStart, memoryMessage)) {
+            return {false, memoryMessage, false};
+        }
+
+        std::uint32_t actualPid = 0;
+        std::string message;
+        const bool ok = processManager.createProcessWithMemory(
+            owner,
+            command.arguments[0],
+            memKB,
+            memStart,
+            priority,
+            totalTime,
+            ppid,
+            actualPid,
+            message);
+        if (!ok) {
+            std::string rollbackMessage;
+            memoryManager.freeByPid(owner, expectedPid, rollbackMessage);
+            return {false, message + "\n[ROLLBACK] " + rollbackMessage, false};
+        }
+        return {ok, message, false};
+    }
+
+    if (command.name == "alloc") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: alloc <sizeKB>", false};
+        }
+        std::uint32_t sizeKB = 0;
+        if (!parseUint32Strict(command.arguments[0], sizeKB)) {
+            return {false, "Usage: alloc <sizeKB>", false};
+        }
+        std::uint32_t start = 0;
+        std::string message;
+        const bool ok = memoryManager.allocateManual(userManager.currentUser(), sizeKB, start, message);
+        return {ok, message, false};
+    }
+
+    if (command.name == "free_mem") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: free_mem <addr>", false};
+        }
+        std::uint32_t addr = 0;
+        if (!parseUint32Strict(command.arguments[0], addr)) {
+            return {false, "Usage: free_mem <addr>", false};
+        }
+        std::string message;
+        const bool ok = memoryManager.freeByAddress(userManager.currentUser(), addr, message);
+        return {ok, message, false};
+    }
+
+    if (command.name == "show_mem" || command.name == "mem_stat") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (!command.arguments.empty()) {
+            return {false, std::string("Usage: ") + command.name, false};
+        }
+        if (command.name == "show_mem") {
+            return {true, memoryManager.showMemory(userManager.currentUser()), false};
+        }
+        return {true, memoryManager.memoryStat(), false};
+    }
+
+    if (command.name == "set_alloc_algo") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: set_alloc_algo <FF|BF|WF>", false};
+        }
+        std::string message;
+        const bool ok = memoryManager.setAlgorithm(command.arguments[0], message);
+        return {ok, message, false};
+    }
+
+    if (command.name == "compact") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (!command.arguments.empty()) {
+            return {false, "Usage: compact", false};
+        }
+        auto result = memoryManager.compact();
+        for (const auto& [pid, newStart] : result.pidNewStart) {
+            processManager.updateProcessMemoryStart(pid, newStart);
+        }
+        return {result.success, result.message, false};
+    }
+
+    if (command.name == "pgfault") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() > 1) {
+            return {false, "Usage: pgfault [pid]", false};
+        }
+        std::ostringstream output;
+        if (command.arguments.empty()) {
+            output << "[PAGE FAULT] Generic simulated page fault.";
+        } else {
+            std::uint32_t pid = 0;
+            if (!parseUint32Strict(command.arguments[0], pid)) {
+                return {false, "Usage: pgfault [pid]", false};
+            }
+            if (!processManager.hasProcess(userManager.currentUser(), pid)) {
+                return {false, "Page fault failed: PID does not exist or access denied.", false};
+            }
+            output << "[PAGE FAULT] PID=" << pid << " triggered a simulated page fault.";
+        }
+        output << "\n[HANDLER] Save current context."
+               << "\n[HANDLER] Locate missing page."
+               << "\n[HANDLER] Simulate loading page into memory."
+               << "\n[HANDLER] Restore process context."
+               << "\n[OK] Page fault handled.";
+        return {true, output.str(), false};
+    }
+
+    if (command.name == "swap_out") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 1) {
+            return {false, "Usage: swap_out <pid>", false};
+        }
+        std::uint32_t pid = 0;
+        if (!parseUint32Strict(command.arguments[0], pid)) {
+            return {false, "Usage: swap_out <pid>", false};
+        }
+        const auto owner = userManager.currentUser();
+        if (!processManager.hasProcess(owner, pid)) {
+            return {false, "Swap out failed: PID does not exist or access denied.", false};
+        }
+        if (processManager.isSwappedOut(owner, pid)) {
+            return {false, "Swap out failed: process is already swapped out.", false};
+        }
+
+        std::string memoryMessage;
+        if (!memoryManager.swapOutProcess(owner, pid, memoryMessage)) {
+            return {false, memoryMessage, false};
+        }
+        std::string processMessage;
+        const bool ok = processManager.markSwappedOut(owner, pid, processMessage);
+        return {ok, memoryMessage + "\n" + processMessage, false};
+    }
+
+    if (command.name == "kill_pcb" ||
+        command.name == "block_pcb" ||
+        command.name == "wakeup_pcb" ||
+        command.name == "show_pcb" ||
+        command.name == "suspend" ||
+        command.name == "resume") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 1) {
+            std::ostringstream usage;
+            usage << "Usage: " << command.name << " <pid>";
+            return {false, usage.str(), false};
+        }
+
+        std::uint32_t pid = 0;
+        if (!parseUint32Strict(command.arguments[0], pid)) {
+            std::ostringstream usage;
+            usage << "Usage: " << command.name << " <pid>";
+            return {false, usage.str(), false};
+        }
+
+        const auto owner = userManager.currentUser();
+        if (command.name == "show_pcb") {
+            const auto message = processManager.showProcess(owner, pid);
+            return {message.find("access denied") == std::string::npos, message, false};
+        }
+
+        std::string message;
+        bool ok = false;
+        if (command.name == "kill_pcb") {
+            std::vector<std::uint32_t> removedPids;
+            ok = processManager.killProcess(owner, pid, removedPids, message);
+            if (ok) {
+                std::ostringstream released;
+                for (const auto removedPid : removedPids) {
+                    std::string freeMessage;
+                    if (memoryManager.freeByPid(owner, removedPid, freeMessage)) {
+                        released << '\n' << freeMessage;
+                    }
+                }
+                message += released.str();
+            }
+        } else if (command.name == "block_pcb") {
+            ok = processManager.blockProcess(owner, pid, message);
+        } else if (command.name == "wakeup_pcb") {
+            ok = processManager.wakeupProcess(owner, pid, message);
+        } else if (command.name == "suspend") {
+            ok = processManager.suspendProcess(owner, pid, message);
+        } else if (command.name == "resume") {
+            ok = processManager.resumeProcess(owner, pid, message);
+        }
+        return {ok, message, false};
+    }
+
+    if (command.name == "renice") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (command.arguments.size() != 2) {
+            return {false, "Usage: renice <pid> <newPriority>", false};
+        }
+
+        std::uint32_t pid = 0;
+        int newPriority = 0;
+        if (!parseUint32Strict(command.arguments[0], pid) || !parseIntStrict(command.arguments[1], newPriority)) {
+            return {false, "Usage: renice <pid> <newPriority>", false};
+        }
+
+        std::string message;
+        const bool ok = processManager.reniceProcess(userManager.currentUser(), pid, newPriority, message);
+        return {ok, message, false};
+    }
+
+    if (command.name == "list_pcb" || command.name == "ptree" || command.name == "readyq") {
+        CommandResponse loginResponse;
+        if (!requireLogin(userManager, loginResponse)) {
+            return loginResponse;
+        }
+        if (!command.arguments.empty()) {
+            std::ostringstream usage;
+            usage << "Usage: " << command.name;
+            return {false, usage.str(), false};
+        }
+
+        const auto owner = userManager.currentUser();
+        if (command.name == "list_pcb") {
+            return {true, processManager.listProcesses(owner), false};
+        }
+        if (command.name == "ptree") {
+            return {true, processManager.processTree(owner), false};
+        }
+        return {true, processManager.readyQueueSnapshot(owner), false};
+    }
+
+    // TODO(P4+): memory, scheduler, VFS, and IPC commands must also call requireLogin() before touching OS resources.
 
     if (command.name == "save") {
         return {true, "[TODO] binary save will be implemented in persistence phase", false};
@@ -113,16 +448,49 @@ std::string CommandDispatcher::helpText() const {
            << "  logout                           Logout current session\n"
            << "  whoami                           Show current login user\n"
            << "\n"
+           << "Process commands:\n"
+           << "  create_pcb <name> <memKB> <priority> <totalTime> [ppid]\n"
+           << "  kill_pcb <pid>\n"
+           << "  block_pcb <pid>\n"
+           << "  wakeup_pcb <pid>\n"
+           << "  show_pcb <pid>\n"
+           << "  list_pcb\n"
+           << "  ptree\n"
+           << "  suspend <pid>\n"
+           << "  resume <pid>\n"
+           << "  renice <pid> <newPriority>\n"
+           << "  readyq\n"
+           << "\n"
+           << "Memory commands:\n"
+           << "  alloc <sizeKB>              Manually allocate kernel memory\n"
+           << "  free_mem <addr>             Free manually allocated memory by start address\n"
+           << "  show_mem                    Show memory block table and ASCII memory map\n"
+           << "  compact                     Compact memory and merge free space\n"
+           << "  mem_stat                    Show memory usage and fragmentation statistics\n"
+           << "  set_alloc_algo <FF|BF|WF>   Change dynamic allocation algorithm\n"
+           << "  pgfault [pid]               Simulate a page fault\n"
+           << "  swap_out <pid>              Simulate swapping out a process\n"
+           << "\n"
            << "OS feature commands for users, PCB, memory, MLFQ, VFS, persistence, and IPC will be added later.";
     return output.str();
 }
 
-std::string CommandDispatcher::statusText(const CommandContext& context) const {
+std::string CommandDispatcher::statusText(
+    const CommandContext& context,
+    const ProcessManager& processManager,
+    const MemoryManager& memoryManager) const {
     std::ostringstream output;
     output << "=== Kernel Status ===\n"
            << "Worker Thread: " << (context.workerRunning ? "RUNNING" : "STOPPED") << '\n'
-           << "Scheduler: NOT IMPLEMENTED\n"
            << "Current User: " << (context.username.empty() ? "<none>" : context.username) << '\n'
+           << "Process Count: " << (context.username.empty() ? 0 : processManager.processCount(context.username)) << '\n'
+           << processManager.readyQueueSnapshot(context.username) << '\n'
+           << "Scheduler: NOT IMPLEMENTED\n"
+           << "Memory Manager: ENABLED\n"
+           << "Total Memory: " << memoryManager.totalMemoryKB() << " KB\n"
+           << "Allocation Algorithm: " << memoryManager.currentAlgorithmName() << '\n'
+           << "Used: " << memoryManager.usedMemoryKB() << " KB\n"
+           << "Free: " << memoryManager.freeMemoryKB() << " KB\n"
            << "Request ID: " << context.requestId << '\n'
            << "Source: " << (context.source == CommandSource::LocalConsole ? "local console" : "remote client");
     return output.str();

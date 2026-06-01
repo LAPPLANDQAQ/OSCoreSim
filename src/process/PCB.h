@@ -1,56 +1,57 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace oscore {
 
 enum class ProcessState {
-    New,
-    Ready,
-    Running,
-    Blocked,
-    SuspendedReady,
-    SuspendedBlocked,
-    Terminated,
-    Swapped
+    NEW,
+    READY,
+    RUNNING,
+    BLOCKED,
+    SUSPENDED_READY,
+    SUSPENDED_BLOCKED,
+    TERMINATED,
+    SWAPPED
 };
 
 struct PCB {
-    int pid = 0;
-    int ppid = 0;
+    std::uint32_t pid = 0;
+    std::uint32_t ppid = 0;
     std::string name;
     std::string owner;
-    ProcessState state = ProcessState::New;
+    ProcessState state = ProcessState::NEW;
     int priority = 0;
     int queueLevel = 0;
-    int totalTime = 0;
-    int executedTime = 0;
-    int remainingTime = 0;
-    int timeSliceLeft = 0;
-    int memStart = -1;
-    int memSize = 0;
+    std::uint32_t totalTime = 0;
+    std::uint32_t executedTime = 0;
+    std::uint32_t remainingTime = 0;
+    std::uint32_t timeSliceLeft = 0;
+    std::uint32_t memStart = 0;
+    std::uint32_t memSize = 0;
     bool swappedOut = false;
-    std::vector<int> children;
+    std::vector<std::uint32_t> children;
 };
 
 [[nodiscard]] inline const char* toString(ProcessState state) {
     switch (state) {
-    case ProcessState::New:
+    case ProcessState::NEW:
         return "NEW";
-    case ProcessState::Ready:
+    case ProcessState::READY:
         return "READY";
-    case ProcessState::Running:
+    case ProcessState::RUNNING:
         return "RUNNING";
-    case ProcessState::Blocked:
+    case ProcessState::BLOCKED:
         return "BLOCKED";
-    case ProcessState::SuspendedReady:
+    case ProcessState::SUSPENDED_READY:
         return "SUSPENDED_READY";
-    case ProcessState::SuspendedBlocked:
+    case ProcessState::SUSPENDED_BLOCKED:
         return "SUSPENDED_BLOCKED";
-    case ProcessState::Terminated:
+    case ProcessState::TERMINATED:
         return "TERMINATED";
-    case ProcessState::Swapped:
+    case ProcessState::SWAPPED:
         return "SWAPPED";
     }
     return "UNKNOWN";

@@ -123,7 +123,7 @@ CommandResponse Kernel::executeRequest(const CommandRequest& request) {
             request.source,
             isWorkerRunning()
         };
-        return dispatcher_.dispatch(command, context, userManager_);
+        return dispatcher_.dispatch(command, context, userManager_, processManager_, memoryManager_);
     } catch (const std::exception& ex) {
         std::ostringstream output;
         output << "Command execution failed: " << ex.what();

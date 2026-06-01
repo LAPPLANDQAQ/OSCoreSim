@@ -1,4 +1,3 @@
-# Initial skeleton demo
 help
 status
 whoami
@@ -19,4 +18,52 @@ save
 load
 unknown_command
 clear
+create_pcb test 64 0 10
+login bob abc
+create_pcb init 64 0 20
+create_pcb shell 128 5 12 1
+create_pcb worker 32 8 8 2
+create_pcb logger 32 10 8 1
+list_pcb
+show_pcb 2
+ptree
+readyq
+block_pcb 2
+list_pcb
+readyq
+wakeup_pcb 2
+suspend 3
+resume 3
+renice 4 2
+ptree
+kill_pcb 1
+list_pcb
+ptree
+readyq
+show_mem
+mem_stat
+alloc 100
+alloc 80
+show_mem
+free_mem 0
+set_alloc_algo BF
+alloc 50
+set_alloc_algo WF
+alloc 30
+show_mem
+compact
+show_mem
+create_pcb p1 64 0 10
+create_pcb p2 128 5 20
+show_mem
+swap_out 6
+show_pcb 6
+pgfault 5
+logout
+register charlie abc
+login charlie abc
+show_mem
+free_mem 0
+alloc 40
+show_mem
 exit
