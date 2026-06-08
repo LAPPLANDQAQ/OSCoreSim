@@ -1,0 +1,1 @@
+将 build\Release\os_sim.exe 复制到上级目录，将 data\os_state.bin 放入此目录

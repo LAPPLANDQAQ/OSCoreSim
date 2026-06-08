@@ -50,9 +50,9 @@ show_mem
 compact
 show_mem
 mem_stat
-pgfault 2
-swap_out 2
-show_pcb 2
+pgfault 5
+swap_out 5
+show_pcb 5
 show_mem
 
 create_pcb s1 64 0 6

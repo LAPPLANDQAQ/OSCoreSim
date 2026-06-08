@@ -76,6 +76,9 @@ Testing/
 *.log
 *.bak
 
-# --- Data files (optional, adjust as needed) ---
-# data/*.bin
-# data/*.dat
+# --- Runtime data directory ---
+# data/ 是运行时目录，二进制快照由程序在运行时生成。
+# 源码仓库只保留 data/.gitkeep 占位目录，不提交 *.bin 快照文件。
+data/*.bin
+data/*.tmp
+!data/.gitkeep

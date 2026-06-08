@@ -179,22 +179,52 @@ build\Release\os_sim_tests.exe   # 单元测试
 ## Run
 
 ```powershell
-# 交互模式（第一个实例自动成为 Master）
+# 交互模式（第一个实例自动成为 Master，默认进入中文数字菜单）
 .\build\Release\os_sim.exe
 
-# 脚本化演示
-.\build\Release\os_sim.exe < tests\full_demo_commands.txt
+# 脚本化演示（stdin 重定向时自动跳过菜单，直接进入原始命令模式）
+cmd /c ".\build\Release\os_sim.exe < tests\full_demo_commands.txt"
 
 # 多实例 IPC —— 打开两个终端
 # 终端 A: .\build\Release\os_sim.exe    （Master）
 # 终端 B: .\build\Release\os_sim.exe    （Client）
 ```
 
-启动后提示符：
+交互启动后会先显示中文数字菜单；在主菜单选择 `9. 进入原始命令模式` 后，会切换到原始命令提示符。脚本重定向输入时不会等待菜单编号，会直接执行原始命令脚本；在 CMD 中可直接运行 `.\build\Release\os_sim.exe < tests\full_demo_commands.txt`，在 PowerShell 中使用上面的 `cmd /c` 写法。
+
+原始命令提示符：
 
 ```text
 OS-SIM[MASTER]>    # 主控端
 OS-SIM[CLIENT]>    # 客户端
+```
+
+### 工作目录与快照文件
+
+程序使用相对路径 `data/os_state.bin` 读写二进制快照。**实际读取位置取决于程序启动时的当前工作目录：**
+
+| 启动方式 | 快照路径 |
+|----------|----------|
+| 项目根目录运行 `.\build\Release\os_sim.exe` | `当前目录\data\os_state.bin` ✅ |
+| 双击 `build\Release\os_sim.exe` | `build\Release\data\os_state.bin` ❌ |
+| VS 调试运行（工作目录设为项目根目录） | `项目根目录\data\os_state.bin` ✅ |
+
+**建议**：始终从项目根目录启动程序。
+
+**data/ 策略**：
+- `data/` 是运行时状态目录
+- 源码仓库只保留 `data/.gitkeep` 占位，不提交 `*.bin` 快照文件
+- 发行版的 `data/os_state.bin` 由用户首次运行后生成，或手动放入演示用快照
+
+### 发行版目录结构
+
+```text
+发行版/
+├── os_sim.exe              # 可执行程序
+├── data/
+│   └── os_state.bin        # 二进制快照（与 os_sim.exe 同级）
+├── tests/                  # 验收测试脚本
+└── 运行说明.md
 ```
 
 ## Commands
