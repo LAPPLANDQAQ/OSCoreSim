@@ -32,6 +32,8 @@ public:
 private:
     bool handleUserMenu(std::istream& input, std::ostream& output);
     bool handleProcessMenu(std::istream& input, std::ostream& output);
+    bool handleContinuousCreateProcess(std::istream& input, std::ostream& output);
+    bool executeProcessCommandAndShowTable(std::ostream& output, const std::string& command);
     bool handleMemoryMenu(std::istream& input, std::ostream& output);
     bool handleSchedulerMenu(std::istream& input, std::ostream& output);
     bool handlePersistenceMenu(std::istream& input, std::ostream& output);

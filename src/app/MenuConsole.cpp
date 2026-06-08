@@ -160,27 +160,7 @@ bool MenuConsole::handleProcessMenu(std::istream& input, std::ostream& output) {
             return false;
         }
         if (choice == "1") {
-            const auto name = askRequired(input, output, "请输入进程名：");
-            if (eof_) return true;
-            if (name.empty()) continue;
-            const auto mem = askRequired(input, output, "请输入内存大小KB：");
-            if (eof_) return true;
-            if (mem.empty()) continue;
-            const auto priority = askRequired(input, output, "请输入优先级0-15：");
-            if (eof_) return true;
-            if (priority.empty()) continue;
-            const auto totalTime = askRequired(input, output, "请输入总运行时间：");
-            if (eof_) return true;
-            if (totalTime.empty()) continue;
-            const auto ppid = askOptional(input, output, "请输入父进程PID（可直接回车跳过）：");
-            if (eof_) return true;
-
-            std::ostringstream command;
-            command << "create_pcb " << name << ' ' << mem << ' ' << priority << ' ' << totalTime;
-            if (!ppid.empty()) {
-                command << ' ' << ppid;
-            }
-            if (execute(output, command.str())) return true;
+            if (handleContinuousCreateProcess(input, output)) return true;
         } else if (choice == "2") {
             if (execute(output, "list_pcb")) return true;
         } else if (choice == "3") {
@@ -192,30 +172,30 @@ bool MenuConsole::handleProcessMenu(std::istream& input, std::ostream& output) {
         } else if (choice == "5") {
             const auto pid = askRequired(input, output, "请输入PID：");
             if (eof_) return true;
-            if (!pid.empty() && execute(output, "block_pcb " + pid)) return true;
+            if (!pid.empty() && executeProcessCommandAndShowTable(output, "block_pcb " + pid)) return true;
         } else if (choice == "6") {
             const auto pid = askRequired(input, output, "请输入PID：");
             if (eof_) return true;
-            if (!pid.empty() && execute(output, "wakeup_pcb " + pid)) return true;
+            if (!pid.empty() && executeProcessCommandAndShowTable(output, "wakeup_pcb " + pid)) return true;
         } else if (choice == "7") {
             const auto pid = askRequired(input, output, "请输入PID：");
             if (eof_) return true;
-            if (!pid.empty() && execute(output, "suspend " + pid)) return true;
+            if (!pid.empty() && executeProcessCommandAndShowTable(output, "suspend " + pid)) return true;
         } else if (choice == "8") {
             const auto pid = askRequired(input, output, "请输入PID：");
             if (eof_) return true;
-            if (!pid.empty() && execute(output, "resume " + pid)) return true;
+            if (!pid.empty() && executeProcessCommandAndShowTable(output, "resume " + pid)) return true;
         } else if (choice == "9") {
             const auto pid = askRequired(input, output, "请输入PID：");
             if (eof_) return true;
             if (pid.empty()) continue;
             const auto priority = askRequired(input, output, "请输入新的优先级0-15：");
             if (eof_) return true;
-            if (!priority.empty() && execute(output, "renice " + pid + " " + priority)) return true;
+            if (!priority.empty() && executeProcessCommandAndShowTable(output, "renice " + pid + " " + priority)) return true;
         } else if (choice == "10") {
             const auto pid = askRequired(input, output, "请输入PID：");
             if (eof_) return true;
-            if (!pid.empty() && execute(output, "kill_pcb " + pid)) return true;
+            if (!pid.empty() && executeProcessCommandAndShowTable(output, "kill_pcb " + pid)) return true;
         } else if (choice == "11") {
             if (execute(output, "readyq")) return true;
         } else {
@@ -478,6 +458,75 @@ std::string MenuConsole::askRequired(
         return {};
     }
     return preserveSpaces ? value : trimmed;
+}
+
+bool MenuConsole::handleContinuousCreateProcess(std::istream& input, std::ostream& output) {
+    output << "\n========== 连续创建进程 ==========\n"
+           << "输入进程信息后将创建一个进程，每次创建后自动显示进程表。\n"
+           << "进程名输入 0 可退出连续创建流程。\n";
+
+    while (!eof_) {
+        const auto name = askRequired(input, output, "请输入进程名称（输入 0 退出）：");
+        if (eof_) return true;
+        if (name.empty()) continue;
+
+        // 输入 0 退出连续创建流程
+        if (trim(name) == "0") {
+            output << "已退出连续创建流程，返回进程管理菜单。\n";
+            return false;
+        }
+
+        const auto mem = askRequired(input, output, "请输入内存大小 KB：");
+        if (eof_) return true;
+        if (mem.empty()) continue;
+
+        const auto priority = askRequired(input, output, "请输入优先级 0-15：");
+        if (eof_) return true;
+        if (priority.empty()) continue;
+
+        const auto totalTime = askRequired(input, output, "请输入总运行时间 tick：");
+        if (eof_) return true;
+        if (totalTime.empty()) continue;
+
+        const auto ppid = askOptional(input, output, "请输入父进程 PID（可直接回车跳过）：");
+        if (eof_) return true;
+
+        std::ostringstream command;
+        command << "create_pcb " << name << ' ' << mem << ' ' << priority << ' ' << totalTime;
+        if (!ppid.empty()) {
+            command << ' ' << ppid;
+        }
+
+        // 创建进程并自动展示进程表
+        if (executeProcessCommandAndShowTable(output, command.str())) return true;
+
+        // 询问是否继续
+        std::string continueChoice;
+        if (!readLine(input, output, "\n是否继续创建进程？（输入 1 继续，其他任意键返回）：", continueChoice)) {
+            return true;
+        }
+        if (trim(continueChoice) != "1") {
+            output << "已返回进程管理菜单。\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool MenuConsole::executeProcessCommandAndShowTable(std::ostream& output, const std::string& command) {
+    // 1. 执行原始进程命令
+    const bool shouldExit = execute(output, command);
+
+    // 2. 无论原始命令成功与否，追加当前进程表
+    output << "\n========== 当前进程表 ==========\n";
+    const auto tableResult = executor_("list_pcb");
+    if (!tableResult.message.empty()) {
+        output << tableResult.message << '\n';
+    } else {
+        output << "（无输出）\n";
+    }
+
+    return shouldExit || tableResult.fatalError;
 }
 
 std::string MenuConsole::askOptional(
