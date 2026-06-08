@@ -53,8 +53,7 @@ MenuOutcome MenuConsole::run(std::istream& input, std::ostream& output) {
                << "5. 持久化管理\n"
                << "6. 系统总览\n"
                << "7. 虚拟文件系统\n"
-               << "8. 多实例说明\n"
-               << "9. 进入原始命令模式\n"
+               << "8. 进入原始命令模式\n"
                << "0. 退出程序\n";
 
         std::string choice;
@@ -77,8 +76,6 @@ MenuOutcome MenuConsole::run(std::istream& input, std::ostream& output) {
         } else if (choice == "7") {
             if (handleVfsMenu(input, output)) return MenuOutcome::ExitProgram;
         } else if (choice == "8") {
-            printMultiInstanceGuide(output);
-        } else if (choice == "9") {
             output << "已切换到原始命令模式。\n";
             return MenuOutcome::EnterRawMode;
         } else if (choice == "0") {
@@ -431,15 +428,6 @@ bool MenuConsole::confirmExit(std::istream& input, std::ostream& output) {
     }
     const auto normalized = toLowerAscii(trim(answer));
     return normalized == "y" || normalized == "yes";
-}
-
-void MenuConsole::printMultiInstanceGuide(std::ostream& output) const {
-    output << "\n========== 多实例说明 ==========\n"
-           << "- 第一个启动的窗口是 MASTER，负责维护真实内核状态。\n"
-           << "- 后续启动的窗口是 CLIENT，命令会通过 Named Pipe 发送给 MASTER。\n"
-           << "- CLIENT 输入 exit 只会关闭当前客户端窗口。\n"
-           << "- MASTER 输入 exit 才会关闭整个内核。\n"
-           << "- 双窗口演示时，可以在一个窗口创建进程，在另一个窗口执行 overview 查看同步状态。\n";
 }
 
 std::string MenuConsole::askRequired(

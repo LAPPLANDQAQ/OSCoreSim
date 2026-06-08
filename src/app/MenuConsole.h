@@ -44,8 +44,6 @@ private:
     bool readLine(std::istream& input, std::ostream& output, const std::string& prompt, std::string& line);
     bool readChoice(std::istream& input, std::ostream& output, std::string& choice);
     bool confirmExit(std::istream& input, std::ostream& output);
-    void printMultiInstanceGuide(std::ostream& output) const;
-
     [[nodiscard]] std::string askRequired(
         std::istream& input,
         std::ostream& output,
