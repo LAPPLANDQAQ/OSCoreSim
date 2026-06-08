@@ -18,6 +18,7 @@ namespace oscore {
 constexpr std::uint32_t kSnapshotVersion = 2;
 
 struct KernelSnapshot {
+    // 快照结构只使用简单值、string 和 vector；写文件时仍采用显式长度前缀编码，不能直接 dump 对象内存。
     std::vector<UserAccount> users;
     std::uint32_t nextPid = 1;
     std::vector<PCB> pcbs;
@@ -52,6 +53,7 @@ public:
     bool load(KernelSnapshot& snapshot, std::string& message) const;
 
 private:
+    // 默认 data/os_state.bin；save 时先写临时文件再替换，降低中途失败导致快照损坏的概率。
     std::string path_;
 };
 

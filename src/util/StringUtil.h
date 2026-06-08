@@ -6,6 +6,7 @@
 
 namespace oscore {
 
+// 轻量字符串工具，保持 header-only，避免为了简单命令解析引入额外依赖。
 inline std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));

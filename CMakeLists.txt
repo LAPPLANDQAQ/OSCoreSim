@@ -20,6 +20,7 @@ set(OS_SIM_CORE_SOURCES
 
 set(OS_SIM_SOURCES
     src/app/ConsoleApp.cpp
+    src/app/MenuConsole.cpp
     src/ipc/InstanceGuard.cpp
     ${OS_SIM_CORE_SOURCES}
     src/view/OverviewRenderer.cpp

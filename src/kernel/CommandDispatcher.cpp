@@ -156,6 +156,7 @@ CommandResponse CommandDispatcher::dispatch(
         }
 
         const auto owner = userManager.currentUser();
+        // P4 后进程创建必须先申请真实内存；若 PCB 创建失败，再按 PID 回滚内存块，避免泄漏。
         const auto expectedPid = processManager.nextPid();
         std::uint32_t memStart = 0;
         std::string memoryMessage;
@@ -254,6 +255,7 @@ CommandResponse CommandDispatcher::dispatch(
             return {false, "Usage: compact", false};
         }
         auto result = memoryManager.compact();
+        // 内存紧缩会移动 PROCESS 块，必须同步更新对应 PCB.memStart。
         for (const auto& [pid, newStart] : result.pidNewStart) {
             processManager.updateProcessMemoryStart(pid, newStart);
         }
@@ -353,6 +355,7 @@ CommandResponse CommandDispatcher::dispatch(
             std::vector<std::uint32_t> removedPids;
             ok = processManager.killProcess(owner, pid, removedPids, message);
             if (ok) {
+                // kill_pcb 会递归删除子树，随后逐个释放子树中所有进程的物理内存。
                 std::ostringstream released;
                 for (const auto removedPid : removedPids) {
                     std::string freeMessage;

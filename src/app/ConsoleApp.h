@@ -32,6 +32,9 @@ private:
     // 判断是否为本地退出命令（Client 下 exit/quit 只关闭自身窗口）
     [[nodiscard]] static bool isLocalExitCommand(const std::string& line);
 
+    // Windows 下用 _isatty 判断是否为真实交互终端；重定向脚本自动进入原始命令模式。
+    [[nodiscard]] static bool isInteractiveInput(std::istream& input);
+
     Kernel kernel_;
     NamedPipeServer pipeServer_;
     NamedPipeClient pipeClient_;

@@ -18,6 +18,7 @@ bool NamedPipeServer::start(CommandHandler handler) {
 
     handler_ = std::move(handler);
     running_.store(true);
+    // MASTER 进程启动后台管道线程，后续 CLIENT 命令都会通过 handler_ 进入 Kernel。
     serverThread_ = std::thread(&NamedPipeServer::serverLoop, this);
     return true;
 }
@@ -53,6 +54,7 @@ bool NamedPipeServer::isRunning() const {
 }
 
 void NamedPipeServer::serverLoop() {
+    // 服务端循环一次处理一个客户端连接：读命令、执行、写响应，然后重新创建下一条管道实例。
     // 预创建第一个管道实例，确保在进入循环之前管道名称已存在
     HANDLE pipe = CreateNamedPipeA(
         kPipeName,
@@ -98,7 +100,7 @@ void NamedPipeServer::serverLoop() {
         // 读取客户端发来的命令字符串
         const auto command = readMessage(pipe);
         if (!command.empty()) {
-            // 调用 Kernel 命令处理器执行命令，获取响应
+            // 调用 Kernel 命令处理器执行命令，获取响应；共享状态仍由 Kernel 的锁和 worker 机制保护。
             const auto response = handler_(command);
 
             // 将响应写回客户端（如果写失败，客户端会检测到断连）
@@ -151,6 +153,7 @@ std::string NamedPipeServer::readMessage(HANDLE pipe) {
     }
 
     // 读取指定长度的消息体
+    // 使用长度前缀协议而不是固定缓冲区，避免长命令被截断。
     std::vector<char> buffer(length);
     DWORD totalRead = 0;
     while (totalRead < length) {
@@ -175,6 +178,7 @@ bool NamedPipeServer::writeMessage(HANDLE pipe, const std::string& message) {
     }
 
     // 写入消息体
+    // 响应可能很长，循环写完全部字节后再 FlushFileBuffers。
     DWORD totalWritten = 0;
     const char* data = message.data();
     while (totalWritten < length) {

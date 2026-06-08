@@ -7,6 +7,34 @@
 #include <unordered_set>
 
 namespace oscore {
+namespace {
+
+// overview 面向终端演示，进度条只根据快照值计算，不回写任何调度或内存状态。
+std::string progressBar(std::uint32_t value, std::uint32_t total, int width) {
+    const double ratio = total == 0 ? 0.0 : static_cast<double>(value) / static_cast<double>(total);
+    const int filled = std::clamp(static_cast<int>(ratio * width + 0.5), 0, width);
+
+    std::string bar;
+    bar.reserve(static_cast<std::size_t>(width) + 2);
+    bar.push_back('[');
+    bar.append(static_cast<std::size_t>(filled), '#');
+    bar.append(static_cast<std::size_t>(width - filled), '.');
+    bar.push_back(']');
+    return bar;
+}
+
+double percentOf(std::uint32_t value, std::uint32_t total) {
+    if (total == 0) {
+        return 0.0;
+    }
+    return static_cast<double>(value) * 100.0 / static_cast<double>(total);
+}
+
+std::string schedulerStateLabel(bool running) {
+    return running ? "运行中 / RUNNING" : "已停止 / STOPPED";
+}
+
+} // namespace
 
 std::string OverviewRenderer::render(
     const std::string& currentUser,
@@ -16,7 +44,9 @@ std::string OverviewRenderer::render(
     std::uint32_t totalMemoryKB,
     const SchedulerInfo& schedulerInfo,
     const std::string& snapshotPath,
-    const std::string& algorithmName) const {
+    const std::string& algorithmName,
+    std::size_t vfsFileCount) const {
+    // OverviewRenderer 是只读渲染器：所有输入都由 Kernel 预先复制，函数内部只做统计和字符串拼接。
     // 计算内存统计
     std::uint32_t usedKB = 0;
     std::uint32_t freeKB = 0;
@@ -34,7 +64,8 @@ std::string OverviewRenderer::render(
         : (1.0 - static_cast<double>(largestFreeKB) / freeKB) * 100.0;
 
     std::ostringstream output;
-    output << "=== System Overview ===\n\n";
+    // 章节标题使用中英双语，便于中文答辩展示，同时保留英文关键字给自动测试匹配。
+    output << "=== 系统总览 / System Overview ===\n\n";
 
     // [1] 系统摘要
     output << renderSystemSummary(
@@ -47,19 +78,23 @@ std::string OverviewRenderer::render(
         fragmentationRate,
         schedulerInfo,
         snapshotPath,
-        algorithmName);
+        algorithmName,
+        vfsFileCount);
 
-    // [2] 进程树
-    output << "\n" << renderProcessTree(currentUser, userProcesses);
+    // [2] 进程表
+    output << "\n\n" << renderProcessTable(userProcesses);
 
-    // [3] 内存分区图
-    output << "\n" << renderMemoryMap(currentUser, memoryBlocks, totalMemoryKB);
+    // [3] 进程树
+    output << "\n\n" << renderProcessTree(currentUser, userProcesses);
 
-    // [4] MLFQ 多级反馈队列
-    output << "\n" << renderMLFQ(currentUser, readyQueues, userProcesses);
+    // [4] 内存分区图
+    output << "\n\n" << renderMemoryMap(currentUser, memoryBlocks, totalMemoryKB);
 
-    // [5] Notes
-    output << "\n" << renderNotes();
+    // [5] MLFQ 多级反馈队列
+    output << "\n\n" << renderMLFQ(currentUser, readyQueues, userProcesses);
+
+    // [6] Notes
+    output << "\n\n" << renderNotes();
 
     return output.str();
 }
@@ -74,33 +109,96 @@ std::string OverviewRenderer::renderSystemSummary(
     double fragmentationRate,
     const SchedulerInfo& schedulerInfo,
     const std::string& snapshotPath,
-    const std::string& algorithmName) const {
+    const std::string& algorithmName,
+    std::size_t vfsFileCount) const {
+    const auto user = currentUser.empty() ? std::string("<none>") : currentUser;
+    const auto schedulerOwner = schedulerInfo.owner.empty() ? std::string("<none>") : schedulerInfo.owner;
+    const auto memoryPercent = percentOf(usedMemoryKB, totalMemoryKB);
+
     std::ostringstream output;
-    output << "[1] System Summary\n"
-           << "Current User: " << (currentUser.empty() ? "<none>" : currentUser) << '\n'
-           << "Scheduler: " << (schedulerInfo.running ? "RUNNING" : "STOPPED") << '\n'
-           << "Scheduler Owner: " << (schedulerInfo.owner.empty() ? "<none>" : schedulerInfo.owner) << '\n'
-           << "Scheduler Interval: " << schedulerInfo.intervalMs << "ms\n"
-           << "Allocation Algorithm: " << algorithmName << '\n'
-           << "Snapshot File: " << snapshotPath << '\n'
+    output << "[1] 系统摘要 / System Summary\n"
+           << std::left
+           << std::setw(35) << "当前用户 / Current User" << ": " << user << '\n'
+           << std::setw(35) << "调度器状态 / Scheduler State" << ": " << schedulerStateLabel(schedulerInfo.running) << '\n'
+           << std::setw(35) << "调度器用户 / Scheduler Owner" << ": " << schedulerOwner << '\n'
+           << std::setw(35) << "调度间隔 / Scheduler Interval" << ": " << schedulerInfo.intervalMs << "ms\n"
+           << std::setw(35) << "当前分配算法 / Allocation Algorithm" << ": " << algorithmName << '\n'
+           << std::setw(35) << "快照文件 / Snapshot File" << ": " << snapshotPath << '\n'
            << '\n'
-           << "Total Memory: " << totalMemoryKB << "KB\n"
-           << "Used Memory: " << usedMemoryKB << "KB\n"
-           << "Free Memory: " << freeMemoryKB << "KB\n"
-           << "Largest Free Block: " << largestFreeKB << "KB\n"
-           << "External Fragmentation: " << std::fixed << std::setprecision(2) << fragmentationRate << "%\n"
-           << "Process Count: " << processCount;
+           << std::setw(35) << "进程数量 / Process Count" << ": " << processCount << '\n'
+           << std::setw(35) << "虚拟文件数量 / VFS Files" << ": " << vfsFileCount << '\n'
+           << std::setw(35) << "内存总量 / Total Memory" << ": " << totalMemoryKB << "KB\n"
+           << std::setw(35) << "已用内存 / Used Memory" << ": " << usedMemoryKB << "KB\n"
+           << std::setw(35) << "空闲内存 / Free Memory" << ": " << freeMemoryKB << "KB\n"
+           << std::setw(35) << "最大空闲块 / Largest Free Block" << ": " << largestFreeKB << "KB\n"
+           << std::setw(35) << "内存使用 / Memory Usage" << ": "
+           << progressBar(usedMemoryKB, totalMemoryKB, 24) << ' '
+           << std::fixed << std::setprecision(2) << memoryPercent << "%\n"
+           << std::setw(35) << "外部碎片率 / External Fragmentation" << ": "
+           << std::fixed << std::setprecision(2) << fragmentationRate << '%';
     return output.str();
+}
+
+std::string OverviewRenderer::renderProcessTable(
+    const std::vector<PCB>& userProcesses) {
+    std::ostringstream output;
+    output << "[2] 程序表 / Process Table\n";
+
+    if (userProcesses.empty()) {
+        output << "当前用户暂无进程。 / No process found for current user.";
+        return output.str();
+    }
+
+    auto rows = userProcesses;
+    std::sort(rows.begin(), rows.end(), [](const PCB& lhs, const PCB& rhs) {
+        return lhs.pid < rhs.pid;
+    });
+
+    // 进程表是 PCB 快照的平铺视图，和后面的树形视图互补：一个便于比较字段，一个便于看父子关系。
+    output << std::left
+           << std::setw(6) << "PID"
+           << std::setw(6) << "PPID"
+           << std::setw(16) << "Name"
+           << std::setw(12) << "State"
+           << std::setw(7) << "Prio"
+           << std::setw(5) << "Q"
+           << std::setw(11) << "CPU"
+           << std::setw(20) << "CPU Progress"
+           << std::setw(8) << "MemKB"
+           << "Swap\n";
+
+    for (const auto& pcb : rows) {
+        const auto cpuText = std::to_string(pcb.executedTime) + "/" + std::to_string(pcb.totalTime);
+        output << std::left
+               << std::setw(6) << pcb.pid
+               << std::setw(6) << pcb.ppid
+               << std::setw(16) << pcb.name
+               << std::setw(12) << toString(pcb.state)
+               << std::setw(7) << pcb.priority
+               << std::setw(5) << ("Q" + std::to_string(pcb.queueLevel))
+               << std::setw(11) << cpuText
+               << std::setw(20) << progressBar(pcb.executedTime, pcb.totalTime, 14)
+               << std::setw(8) << pcb.memSize
+               << (pcb.swappedOut ? "是 / Yes" : "否 / No") << '\n';
+    }
+
+    std::string result = output.str();
+    if (!result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+    return result;
 }
 
 std::string OverviewRenderer::renderProcessTree(
     const std::string& currentUser,
     const std::vector<PCB>& userProcesses) const {
+    (void)currentUser;
+
     std::ostringstream output;
-    output << "[2] Process Tree\n";
+    output << "[3] 进程树 / Process Tree\n";
 
     if (userProcesses.empty()) {
-        output << "No process found for current user.";
+        output << "当前用户暂无进程。 / No process found for current user.";
         return output.str();
     }
 
@@ -126,6 +224,7 @@ std::string OverviewRenderer::renderProcessTree(
     std::sort(roots.begin(), roots.end());
 
     std::unordered_set<std::uint32_t> visited;
+    // 进程树只根据 PCB.children/ppid 快照构建，visited 用来防御异常环形父子关系。
     for (std::size_t i = 0; i < roots.size(); ++i) {
         if (i > 0) {
             output << '\n';  // 多个根进程之间换行分隔
@@ -211,39 +310,73 @@ std::string OverviewRenderer::renderMemoryMap(
     const std::vector<MemoryBlock>& memoryBlocks,
     std::uint32_t totalMemoryKB) const {
     std::ostringstream output;
-    output << "[3] Memory Map (0-" << totalMemoryKB << "KB)\n";
+    output << "[4] 内存分区图 / Memory Map\n"
+           << "地址范围 / Address Range: 0-" << totalMemoryKB << "KB\n";
 
     if (memoryBlocks.empty()) {
-        output << "No memory blocks.";
+        output << "暂无内存分区。 / No memory blocks.";
         return output.str();
     }
 
-    // ASCII 内存条
+    std::uint32_t usedKB = 0;
+    for (const auto& block : memoryBlocks) {
+        if (block.type != MemoryBlockType::FREE) {
+            usedKB += block.size;
+        }
+    }
+
+    output << "内存使用 / Usage: "
+           << progressBar(usedKB, totalMemoryKB, 32) << ' '
+           << usedKB << '/' << totalMemoryKB << "KB ("
+           << std::fixed << std::setprecision(2) << percentOf(usedKB, totalMemoryKB) << "%)\n"
+           << "图例 / Legend: FREE=空闲, PROCESS=进程, KERNEL=内核, SWAPPED=已换出, OTHER_USER=其他用户\n\n";
+
+    // ASCII 内存条：块太多时会很长，因此先构造字符串，再决定是否降级为分段视图。
+    // 内存图展示全局分区，但非当前用户的块只显示 OTHER_USER，避免泄露具体进程名。
+    std::ostringstream mapLine;
     for (const auto& block : memoryBlocks) {
         if (block.type == MemoryBlockType::FREE) {
-            output << "|--FREE:" << block.size << "KB--";
+            mapLine << "|--FREE:" << block.size << "KB--";
         } else if (block.type == MemoryBlockType::PROCESS) {
             const bool owned = block.owner == currentUser;
             if (owned) {
-                output << "|##P" << block.pid << ':' << block.tag << ':' << block.size << "KB";
+                mapLine << "|##P" << block.pid << ':' << block.tag << ':' << block.size << "KB";
             } else {
-                output << "|##OTHER_USER:" << block.size << "KB";
+                mapLine << "|##OTHER_USER:" << block.size << "KB";
             }
         } else if (block.type == MemoryBlockType::KERNEL) {
             const bool owned = block.owner == currentUser;
             if (owned) {
-                output << "|##" << block.tag << ':' << block.size << "KB";
+                mapLine << "|##" << block.tag << ':' << block.size << "KB";
             } else {
-                output << "|##OTHER_USER:" << block.size << "KB";
+                mapLine << "|##OTHER_USER:" << block.size << "KB";
             }
         } else if (block.type == MemoryBlockType::SWAPPED) {
-            output << "|##SWAPPED:P" << block.pid << ':' << block.size << "KB";
+            mapLine << "|##SWAPPED:P" << block.pid << ':' << block.size << "KB";
         }
     }
-    output << "|\n\n";
+    mapLine << '|';
+
+    const auto asciiMap = mapLine.str();
+    if (asciiMap.size() <= 160) {
+        output << asciiMap << "\n\n";
+    } else {
+        output << "内存块较多，改用分段视图展示：\n";
+        for (const auto& block : memoryBlocks) {
+            const bool free = block.type == MemoryBlockType::FREE;
+            const bool owned = !free && block.owner == currentUser;
+            output << '[' << block.start << '-' << (block.start + block.size - 1) << "] "
+                   << toString(block.type) << " "
+                   << (free ? "-" : (owned ? block.owner : "OTHER_USER")) << " "
+                   << (free ? "-" : ("pid=" + std::to_string(block.pid))) << " "
+                   << (free ? "-" : block.tag) << " "
+                   << block.size << "KB\n";
+        }
+        output << '\n';
+    }
 
     // 内存块明细表
-    output << "Memory Blocks:\n"
+    output << "Memory Blocks / 内存块明细:\n"
            << std::left
            << std::setw(8) << "Start"
            << std::setw(8) << "End"
@@ -282,6 +415,8 @@ std::string OverviewRenderer::renderMLFQ(
     const std::string& currentUser,
     const std::array<std::vector<std::uint32_t>, 3>& readyQueues,
     const std::vector<PCB>& userProcesses) const {
+    (void)currentUser;
+
     // 构建 PID -> PCB 查找表
     std::unordered_map<std::uint32_t, PCB> pcbMap;
     for (const auto& pcb : userProcesses) {
@@ -289,13 +424,16 @@ std::string OverviewRenderer::renderMLFQ(
     }
 
     std::ostringstream output;
-    output << "[4] MLFQ\n";
+    output << "[5] 多级反馈队列 / MLFQ\n";
 
     std::vector<std::string> warnings;
 
     for (int q = 0; q < 3; ++q) {
-        output << 'Q' << q << "(prio " << priorityRangeForQueue(q)
-               << ", quantum=" << quantumForQueue(q) << "): ";
+        // MLFQ 渲染使用 readyQueues 快照，并用 PCB 快照补充状态、CPU 进度和一致性告警。
+        output << queueName(q)
+               << " | 优先级 / Priority: " << priorityRangeForQueue(q)
+               << " | 时间片 / Quantum: " << quantumForQueue(q) << '\n'
+               << "  队列 / Queue: ";
 
         if (readyQueues[q].empty()) {
             output << "empty\n";
@@ -321,7 +459,12 @@ std::string OverviewRenderer::renderMLFQ(
             }
 
             const auto& pcb = it->second;
-            output << pid << '(' << pcb.name << ')';
+            output << "PID=" << pid
+                   << '(' << pcb.name
+                   << ", state=" << toString(pcb.state)
+                   << ", cpu=" << pcb.executedTime << '/' << pcb.totalTime
+                   << ' ' << progressBar(pcb.executedTime, pcb.totalTime, 8)
+                   << ')';
 
             // 检查状态一致性
             if (pcb.state != ProcessState::READY) {
@@ -361,11 +504,12 @@ std::string OverviewRenderer::renderMLFQ(
 }
 
 std::string OverviewRenderer::renderNotes() {
-    return "[5] Notes\n"
-           "- BLOCKED, SUSPENDED, SWAPPED, and TERMINATED processes are not schedulable.\n"
-           "- Memory map is global. Other users' blocks are read-only.\n"
-           "- overview is a read-only snapshot command.\n"
-           "- Use step, list_pcb, show_mem, readyq for detailed views.";
+    return "[6] 说明 / Notes\n"
+           "- overview 是只读快照命令，只渲染调用方传入的进程、内存、调度队列和文件计数，不修改系统状态。\n"
+           "- BLOCKED、SUSPENDED、SWAPPED、TERMINATED 进程不会进入可调度队列。\n"
+           "- 内存分区图是全局视图，其他用户的内存块显示为 OTHER_USER，避免泄露细节。\n"
+           "- 多级反馈队列仅展示当前快照中的 READY 队列；异常队列项会在 Warnings 中列出。\n"
+           "- 虚拟文件系统数量已汇总在 System Summary，文件内容仍请使用 ls_file、read_file、write_file 查看。";
 }
 
 std::string OverviewRenderer::queueName(int level) {

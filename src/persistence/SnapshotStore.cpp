@@ -20,6 +20,7 @@ constexpr std::uint32_t kFlags = 0;
 constexpr std::uint32_t kMaxStringLength = 1024 * 1024;
 constexpr std::uint32_t kMaxVectorCount = 1'000'000;
 
+// 快照文件采用“固定头 + 显式字段序列化”，避免直接 dump STL/对象内存导致 ABI、指针和 padding 不稳定。
 class BinaryWriter {
 public:
     explicit BinaryWriter(std::ostream& stream) : stream_(stream) {}
@@ -49,6 +50,7 @@ public:
     }
 
     void writeString(const std::string& value) {
+        // std::string 不能直接 dump 对象内存，统一采用 uint32 length + raw bytes。
         if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
             throw std::runtime_error("string too large");
         }
@@ -100,6 +102,7 @@ public:
     }
 
     [[nodiscard]] std::string readString() {
+        // 读取长度前先做上限检查，避免损坏文件导致超大内存分配。
         const auto length = readUint32();
         if (length > kMaxStringLength) {
             throw std::runtime_error("string length is too large");
@@ -117,6 +120,7 @@ private:
 };
 
 void writeHeader(BinaryWriter& writer) {
+    // magic 用来快速识别本项目快照文件；version 用来决定后续字段是否包含扩展段。
     writer.writeBytes(kMagic.data(), kMagic.size());
     writer.writeUint32(kSnapshotVersion);  // 当前版本 = 2
     writer.writeUint32(kHeaderSize);
@@ -149,6 +153,7 @@ void writeHeader(BinaryWriter& writer) {
 // === VFS 二进制序列化 ===
 
 void writeVirtualFile(BinaryWriter& writer, const VirtualFile& file) {
+    // VFS 是版本 2 新增扩展，仍沿用长度前缀字符串，保证文件名和内容可以包含空格。
     writer.writeUint32(file.fileId);
     writer.writeString(file.owner);
     writer.writeString(file.name);
@@ -169,6 +174,7 @@ VirtualFile readVirtualFile(BinaryReader& reader) {
 }
 
 void writeUser(BinaryWriter& writer, const UserAccount& account) {
+    // 用户、PCB、内存块逐字段写入，格式清晰且便于做版本兼容检查。
     writer.writeString(account.username);
     writer.writeString(account.passwordHash);
     writer.writeString(account.salt);
@@ -320,6 +326,7 @@ bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) c
             // 二进制格式面向本课程 Windows 环境，使用带版本号的原生小端存储；跨端序转换不在本阶段范围内。
             writeHeader(writer);
 
+            // 写入顺序就是磁盘格式的一部分：load 必须按完全相同的顺序读取。
             writer.writeUint32(static_cast<std::uint32_t>(snapshot.users.size()));
             for (const auto& account : snapshot.users) {
                 writeUser(writer, account);
@@ -348,7 +355,7 @@ bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) c
             writer.writeBool(snapshot.schedulerRunning);
             writer.writeString(snapshot.schedulerOwner);
 
-            // P9 VFS 数据：写入 nextFileId 和所有虚拟文件
+            // Version 2 VFS 扩展：追加 nextFileId 和所有虚拟文件；不改变前面 V1 字段布局。
             writer.writeUint32(snapshot.nextFileId);
             writer.writeUint32(static_cast<std::uint32_t>(snapshot.virtualFiles.size()));
             for (const auto& file : snapshot.virtualFiles) {
@@ -439,7 +446,7 @@ bool SnapshotStore::load(KernelSnapshot& snapshot, std::string& message) const {
         loaded.schedulerRunning = reader.readBool();
         loaded.schedulerOwner = reader.readString();
 
-        // P9 VFS 数据：仅在版本 2 快照中读取；版本 1 保持空 VFS
+        // Version 1 快照没有 VFS 段，保持默认空文件系统；Version 2 才继续读取扩展字段。
         if (fileVersion >= 2) {
             loaded.nextFileId = reader.readUint32();
             const auto vfsCount = reader.readUint32();

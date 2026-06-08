@@ -19,6 +19,8 @@ enum class MemoryBlockType {
     SWAPPED
 };
 
+// MemoryBlock 表示动态分区中的连续物理内存块，单位为 KB。
+// PROCESS 块关联 PCB，KERNEL 块用于手动 alloc 演示，FREE 块必须保持 pid=0 且 owner 为空。
 struct MemoryBlock {
     std::uint32_t start = 0;
     std::uint32_t size = 0;
@@ -28,6 +30,7 @@ struct MemoryBlock {
     std::string tag;
 };
 
+// compact 后需要把进程内存新地址同步回 PCB，因此返回 pid -> newStart 映射。
 struct CompactionResult {
     bool success = false;
     std::string message;

@@ -16,6 +16,7 @@ bool MemoryManager::allocateManual(
     std::uint32_t sizeKB,
     std::uint32_t& outStart,
     std::string& message) {
+    // 手动内存用于课程实验中的显式 alloc/free，标记为 KERNEL 块但仍记录 owner 做权限隔离。
     return allocateLocked(owner, 0, "manual", sizeKB, MemoryBlockType::KERNEL, outStart, message);
 }
 
@@ -26,11 +27,13 @@ bool MemoryManager::allocateForProcess(
     std::uint32_t sizeKB,
     std::uint32_t& outStart,
     std::string& message) {
+    // 进程内存与 PCB PID 绑定，只能由进程生命周期、kill_pcb 或 swap_out 间接释放。
     return allocateLocked(owner, pid, processName, sizeKB, MemoryBlockType::PROCESS, outStart, message);
 }
 
 bool MemoryManager::freeByAddress(const std::string& owner, std::uint32_t addr, std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
+    // 手动释放必须命中块起始地址，且只能释放当前用户拥有的 KERNEL 手动分配块。
     auto it = std::find_if(blocks_.begin(), blocks_.end(), [addr](const MemoryBlock& block) {
         return block.start == addr;
     });
@@ -75,6 +78,7 @@ bool MemoryManager::freeByPid(const std::string& owner, std::uint32_t pid, std::
     const auto released = it->size;
     const auto start = it->start;
     *it = MemoryBlock{it->start, it->size, MemoryBlockType::FREE, 0, "", ""};
+    // 释放后立即合并相邻空闲块，降低外部碎片，保持 blocks_ 连续且有序。
     mergeFreeBlocksLocked();
 
     std::ostringstream output;
@@ -95,6 +99,7 @@ bool MemoryManager::swapOutProcess(const std::string& owner, std::uint32_t pid, 
 
     const auto released = it->size;
     *it = MemoryBlock{it->start, it->size, MemoryBlockType::FREE, 0, "", ""};
+    // swap_out 只释放物理内存块；PCB 的 SWAPPED 状态由 ProcessManager 维护。
     mergeFreeBlocksLocked();
 
     std::ostringstream output;
@@ -108,6 +113,7 @@ CompactionResult MemoryManager::compact() {
     CompactionResult result;
     result.success = true;
 
+    // 紧缩时保持已分配块的相对顺序，只改变 start；进程块的新地址通过 pidNewStart 回写 PCB。
     std::vector<MemoryBlock> allocated;
     allocated.reserve(blocks_.size());
     for (const auto& block : blocks_) {
@@ -130,6 +136,7 @@ CompactionResult MemoryManager::compact() {
                    << ": " << oldStart << "KB -> " << block.start << "KB";
         }
         if (block.type == MemoryBlockType::PROCESS) {
+            // Kernel 根据 pidNewStart 回写 PCB::memStart，避免 MemoryManager 直接依赖 PCB 表。
             result.pidNewStart[block.pid] = block.start;
         }
     }
@@ -354,6 +361,7 @@ bool MemoryManager::allocateLocked(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    // 根据当前算法选择空闲块：FF 立即返回，BF/WF 继续扫描寻找最优候选。
     auto it = findFreeBlockLocked(sizeKB);
     if (it == blocks_.end()) {
         message = "Allocation failed: no suitable free block.";
@@ -366,6 +374,7 @@ bool MemoryManager::allocateLocked(
     if (freeSize == sizeKB) {
         *it = allocated;
     } else {
+        // 大空闲块被拆成“已分配块 + 剩余空闲块”，这是连续分区分配的核心动作。
         it->start = freeStart + sizeKB;
         it->size = freeSize - sizeKB;
         blocks_.insert(it, allocated);
@@ -387,6 +396,7 @@ std::vector<MemoryBlock>::iterator MemoryManager::findFreeBlockLocked(std::uint3
         }
 
         if (algorithm_ == AllocAlgorithm::FIRST_FIT) {
+            // First Fit：选择地址顺序上第一个可容纳请求的空闲块。
             return it;
         }
         if (best == blocks_.end()) {
@@ -394,8 +404,10 @@ std::vector<MemoryBlock>::iterator MemoryManager::findFreeBlockLocked(std::uint3
             continue;
         }
         if (algorithm_ == AllocAlgorithm::BEST_FIT && it->size < best->size) {
+            // Best Fit：保留当前最小可用块，尽量减少本次分配后的剩余空间。
             best = it;
         } else if (algorithm_ == AllocAlgorithm::WORST_FIT && it->size > best->size) {
+            // Worst Fit：选择最大空闲块，试图把大块切开后仍保留较大的剩余空间。
             best = it;
         }
     }
@@ -416,6 +428,7 @@ void MemoryManager::mergeFreeBlocksLocked() {
             merged.back().type == MemoryBlockType::FREE &&
             block.type == MemoryBlockType::FREE &&
             merged.back().start + merged.back().size == block.start) {
+            // 只有物理地址连续的 FREE 块才能合并，已分配块之间不能跨越合并。
             merged.back().size += block.size;
         } else {
             merged.push_back(block);

@@ -9,6 +9,8 @@ enum class AccountStatus {
     LOCKED
 };
 
+// UserAccount 是可持久化账户记录，只保存盐和密码散列，不保存明文密码。
+// failedAttempts 用于演示三次登录失败后锁定账户的安全策略。
 struct UserAccount {
     std::string username;
     std::string passwordHash;

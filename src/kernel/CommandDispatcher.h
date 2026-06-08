@@ -9,6 +9,8 @@
 
 namespace oscore {
 
+// CommandDispatcher 负责命令解析和通用命令分发。
+// 持久化、overview、VFS 和调度线程控制由 Kernel 优先处理，避免 Dispatcher 直接管理跨模块状态。
 class CommandDispatcher {
 public:
     [[nodiscard]] Command parse(const std::string& line) const;
