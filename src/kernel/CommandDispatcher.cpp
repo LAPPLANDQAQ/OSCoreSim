@@ -530,6 +530,10 @@ std::string CommandDispatcher::helpText() const {
            << "  rm_file <name>                删除虚拟文件\n"
            << "\n"
            << "VFS、持久化和 IPC 相关命令均已集成到上述命令中。";
+    output << "\nAliases:\n"
+           << "  start     -> start_sched\n"
+           << "  stop      -> stop_sched\n"
+           << "  restart   -> restart_sched\n";
     return output.str();
 }
 

@@ -108,6 +108,17 @@ void UserManager::clearCurrentSession() {
     currentUser_.reset();
 }
 
+bool UserManager::restoreSessionIfUserExists(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!username.empty() && users_.find(username) != users_.end()) {
+        currentUser_ = username;
+        return true;
+    }
+
+    currentUser_.reset();
+    return false;
+}
+
 std::vector<UserAccount> UserManager::exportUsers() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<UserAccount> users;

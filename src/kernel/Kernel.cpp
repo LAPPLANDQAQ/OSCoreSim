@@ -67,7 +67,7 @@ void Kernel::start() {
     if (snapshotStore_.exists()) {
         KernelSnapshot snapshot;
         std::string loadMessage;
-        if (snapshotStore_.load(snapshot, loadMessage) && importSnapshotLocked(snapshot, loadMessage)) {
+        if (snapshotStore_.load(snapshot, loadMessage) && importSnapshotLocked(snapshot, loadMessage, false)) {
             const auto summary = snapshotStore_.summarize(snapshot);
             std::ostringstream boot;
             boot << "[BOOT] Found " << snapshotStore_.defaultPath() << ", loading previous system state...\n"
@@ -180,7 +180,7 @@ KernelSnapshot Kernel::exportSnapshot() const {
 
 bool Kernel::importSnapshot(const KernelSnapshot& snapshot, std::string& message) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    return importSnapshotLocked(snapshot, message);
+    return importSnapshotLocked(snapshot, message, false);
 }
 
 void Kernel::workerLoop() {
@@ -278,8 +278,11 @@ CommandResponse Kernel::executeRequest(const CommandRequest& request) {
 
 bool Kernel::isSchedulerCommand(const std::string& name) const {
     return name == "start_sched" ||
+           name == "start" ||
            name == "stop_sched" ||
+           name == "stop" ||
            name == "restart_sched" ||
+           name == "restart" ||
            name == "step";
 }
 
@@ -298,16 +301,25 @@ CommandResponse Kernel::handleSchedulerCommand(const Command& command, const Com
     }
 
     const auto owner = userManager_.currentUser();
-    if (command.name == "step") {
+    std::string schedulerCommand = command.name;
+    if (schedulerCommand == "start") {
+        schedulerCommand = "start_sched";
+    } else if (schedulerCommand == "stop") {
+        schedulerCommand = "stop_sched";
+    } else if (schedulerCommand == "restart") {
+        schedulerCommand = "restart_sched";
+    }
+
+    if (schedulerCommand == "step") {
         if (!command.arguments.empty()) {
             return {false, "Usage: step", false};
         }
         return {true, scheduler_.step(owner, processManager_, memoryManager_), false};
     }
 
-    if (command.name == "start_sched") {
+    if (schedulerCommand == "start_sched") {
         if (!command.arguments.empty()) {
-            return {false, "Usage: start_sched", false};
+            return {false, "Usage: " + command.name, false};
         }
         if (schedulerRunning_.load()) {
             return {true, "[INFO] MLFQ scheduler is already running for user " + schedulerOwner_ + ".", false};
@@ -322,9 +334,9 @@ CommandResponse Kernel::handleSchedulerCommand(const Command& command, const Com
         return {true, output.str(), false};
     }
 
-    if (command.name == "stop_sched") {
+    if (schedulerCommand == "stop_sched") {
         if (!command.arguments.empty()) {
-            return {false, "Usage: stop_sched", false};
+            return {false, "Usage: " + command.name, false};
         }
         if (!schedulerRunning_.load()) {
             return {true, "[INFO] Scheduler is not running.", false};
@@ -339,9 +351,9 @@ CommandResponse Kernel::handleSchedulerCommand(const Command& command, const Com
         return {true, output.str(), false};
     }
 
-    if (command.name == "restart_sched") {
+    if (schedulerCommand == "restart_sched") {
         if (!command.arguments.empty()) {
-            return {false, "Usage: restart_sched", false};
+            return {false, "Usage: " + command.name, false};
         }
         schedulerRunning_.store(false);
         scheduler_.setRunning(false);
@@ -385,20 +397,26 @@ CommandResponse Kernel::handlePersistenceCommand(const Command& command) {
         scheduler_.setRunning(false);
         schedulerOwner_.clear();
 
+        const auto previousUser = userManager_.currentUser();
         KernelSnapshot snapshot;
         std::string message;
         if (!snapshotStore_.load(snapshot, message)) {
             return {false, message, false};
         }
-        if (!importSnapshotLocked(snapshot, message)) {
+        if (!importSnapshotLocked(snapshot, message, true)) {
             return {false, "Load failed: " + message, false};
         }
+        const bool sessionPreserved = !previousUser.empty() && userManager_.currentUser() == previousUser;
 
         std::ostringstream output;
         output << "[OK] System state loaded from " << snapshotStore_.defaultPath() << '\n'
                << snapshotSummaryText(snapshot) << '\n'
-               << "Scheduler: STOPPED after load\n"
-               << "Please login again.";
+               << "Scheduler: STOPPED after load\n";
+        if (sessionPreserved) {
+            output << "Session: preserved for user " << previousUser << ".";
+        } else {
+            output << "Session: cleared after load. Please login again.";
+        }
         return {true, output.str(), false};
     }
 
@@ -527,7 +545,10 @@ KernelSnapshot Kernel::exportSnapshotLocked() const {
     return snapshot;
 }
 
-bool Kernel::importSnapshotLocked(const KernelSnapshot& snapshot, std::string& message) {
+bool Kernel::importSnapshotLocked(
+    const KernelSnapshot& snapshot,
+    std::string& message,
+    bool preserveCurrentSession) {
     if (!validateSnapshot(snapshot, message)) {
         return false;
     }
@@ -537,8 +558,13 @@ bool Kernel::importSnapshotLocked(const KernelSnapshot& snapshot, std::string& m
     scheduler_.setRunning(false);
     schedulerOwner_.clear();
 
+    const auto previousUser = preserveCurrentSession ? userManager_.currentUser() : std::string{};
     userManager_.importUsers(snapshot.users);
-    userManager_.clearCurrentSession();
+    if (preserveCurrentSession) {
+        userManager_.restoreSessionIfUserExists(previousUser);
+    } else {
+        userManager_.clearCurrentSession();
+    }
 
     processManager_.importPcbs(snapshot.pcbs);
     processManager_.importNextPid(snapshot.nextPid);

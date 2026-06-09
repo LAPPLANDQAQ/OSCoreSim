@@ -57,7 +57,7 @@ private:
     [[nodiscard]] CommandResponse handleOverview(const Command& command);
     [[nodiscard]] CommandResponse handleVfsCommand(const Command& command);
     [[nodiscard]] KernelSnapshot exportSnapshotLocked() const;
-    bool importSnapshotLocked(const KernelSnapshot& snapshot, std::string& message);
+    bool importSnapshotLocked(const KernelSnapshot& snapshot, std::string& message, bool preserveCurrentSession);
     void resetStateLocked();
     [[nodiscard]] bool validateSnapshot(const KernelSnapshot& snapshot, std::string& message) const;
     [[nodiscard]] std::string snapshotSummaryText(const KernelSnapshot& snapshot) const;

@@ -23,6 +23,7 @@ public:
     [[nodiscard]] std::string whoami() const;
     [[nodiscard]] bool userExists(const std::string& username) const;
     void clearCurrentSession();
+    bool restoreSessionIfUserExists(const std::string& username);
 
     [[nodiscard]] std::vector<UserAccount> exportUsers() const;
     void importUsers(const std::vector<UserAccount>& users);
