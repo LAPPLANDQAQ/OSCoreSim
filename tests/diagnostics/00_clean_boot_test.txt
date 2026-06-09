@@ -1,0 +1,11 @@
+status
+whoami
+register p1clean abc
+login p1clean abc
+whoami
+create_pcb clean_init 32 0 5
+list_pcb
+show_pcb 1
+show_pcb 9
+logout
+exit

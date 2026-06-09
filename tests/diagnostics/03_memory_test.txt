@@ -1,0 +1,27 @@
+register p1mem abc
+login p1mem abc
+show_mem
+mem_stat
+alloc p1mem_a 40
+alloc p1mem_b 20
+show_mem
+free_mem 0
+free_mem 576
+free_mem 9999
+set_alloc_algo BF
+alloc p1mem_c 16
+set_alloc_algo WF
+alloc p1mem_d 16
+mem_stat
+compact
+show_mem
+pgfault
+create_pcb p1mem_proc 32 0 5
+pgfault 1
+pgfault 9
+swap_out 1
+swap_out 9
+show_mem
+show_pcb 9
+logout
+exit

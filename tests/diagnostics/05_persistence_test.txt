@@ -1,0 +1,17 @@
+register p1persist abc
+login p1persist abc
+create_pcb p1persist_before 32 0 6
+list_pcb
+save
+load
+whoami
+list_pcb
+create_pcb p1persist_after_no_login 16 1 4
+login p1persist abc
+list_pcb
+create_pcb p1persist_after_load 16 1 4
+list_pcb
+show_pcb 1
+show_pcb 10
+logout
+exit

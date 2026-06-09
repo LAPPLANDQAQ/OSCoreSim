@@ -1,0 +1,45 @@
+status
+register p1full abc
+login p1full abc
+whoami
+create_pcb p1full_init 32 0 8
+list_pcb
+show_pcb 9
+ptree
+readyq
+block_pcb 9
+list_pcb
+wakeup_pcb 9
+list_pcb
+suspend 9
+list_pcb
+resume 9
+renice 9 3
+list_pcb
+alloc p1full_mem 24
+show_mem
+list_pcb
+free_mem 568
+show_mem
+mem_stat
+pgfault
+swap_out 9
+show_pcb 9
+step
+start_sched
+stop_sched
+restart_sched
+stop_sched
+save
+load
+whoami
+login p1full abc
+touch_file full.txt
+write_file full.txt menu raw equivalent
+read_file full.txt
+ls_file
+rm_file full.txt
+kill_pcb 9
+list_pcb
+logout
+exit

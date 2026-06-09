@@ -1,0 +1,14 @@
+register p1vfs abc
+login p1vfs abc
+ls_file
+touch_file p1_note.txt
+write_file p1_note.txt hello operating system
+read_file p1_note.txt
+write_file p1_auto.md auto created content with spaces
+ls_file
+read_file p1_auto.md
+rm_file p1_note.txt
+read_file p1_note.txt
+ls_file
+logout
+exit

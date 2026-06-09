@@ -1,0 +1,17 @@
+register p1sched abc
+login p1sched abc
+create_pcb p1sched_a 32 0 8
+create_pcb p1sched_b 32 5 8
+readyq
+step
+readyq
+start
+stop
+restart
+start_sched
+status
+stop_sched
+restart_sched
+stop_sched
+logout
+exit

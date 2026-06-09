@@ -1,0 +1,13 @@
+register p1user abc
+login p1user abc
+whoami
+login p1user abc
+logout
+whoami
+logout
+register p1lock abc
+login p1lock bad
+login p1lock bad
+login p1lock bad
+login p1lock abc
+exit

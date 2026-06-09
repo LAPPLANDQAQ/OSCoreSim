@@ -1,0 +1,25 @@
+register p1proc abc
+login p1proc abc
+create_pcb p1proc_init 64 0 12
+create_pcb p1proc_child 32 5 8 9
+create_pcb p1proc_leaf 16 8 6 10
+list_pcb
+show_pcb 1
+show_pcb 9
+show_pcb 10
+ptree
+readyq
+block_pcb 10
+readyq
+wakeup_pcb 10
+suspend 11
+readyq
+resume 11
+renice 11 2
+list_pcb
+kill_pcb 9
+list_pcb
+ptree
+readyq
+logout
+exit
