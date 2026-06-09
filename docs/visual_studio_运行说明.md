@@ -61,7 +61,7 @@ cmd /c ".\x64\Release\OSCoreSim.exe < tests\full_demo_commands.txt"
 **建议：**
 
 - 总是从项目根目录启动：`.\x64\Release\OSCoreSim.exe`
-- VS 调试时在项目属性中设置"调试 → 工作目录"为 `$(ProjectDir)\..\..`
+- VS 调试时项目已设置工作目录为 `$(SolutionDir)`（项目根目录），无需手动调整
 - 最终发行版中 `data/` 必须与 `OSCoreSim.exe` 放在同一级目录
 
 ## 测试
