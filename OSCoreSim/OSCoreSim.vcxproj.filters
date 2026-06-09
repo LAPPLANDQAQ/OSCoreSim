@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Source Files\app">
+      <UniqueIdentifier>{A1B2C3D4-1001-4000-8000-000000000001}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\auth">
+      <UniqueIdentifier>{A1B2C3D4-1002-4000-8000-000000000002}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\ipc">
+      <UniqueIdentifier>{A1B2C3D4-1003-4000-8000-000000000003}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\kernel">
+      <UniqueIdentifier>{A1B2C3D4-1004-4000-8000-000000000004}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\memory">
+      <UniqueIdentifier>{A1B2C3D4-1005-4000-8000-000000000005}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\persistence">
+      <UniqueIdentifier>{A1B2C3D4-1006-4000-8000-000000000006}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\process">
+      <UniqueIdentifier>{A1B2C3D4-1007-4000-8000-000000000007}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\vfs">
+      <UniqueIdentifier>{A1B2C3D4-1008-4000-8000-000000000008}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\view">
+      <UniqueIdentifier>{A1B2C3D4-1009-4000-8000-000000000009}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Header Files\app">
+      <UniqueIdentifier>{A1B2C3D4-2001-4000-8000-000000000001}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\auth">
+      <UniqueIdentifier>{A1B2C3D4-2002-4000-8000-000000000002}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\ipc">
+      <UniqueIdentifier>{A1B2C3D4-2003-4000-8000-000000000003}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\kernel">
+      <UniqueIdentifier>{A1B2C3D4-2004-4000-8000-000000000004}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\memory">
+      <UniqueIdentifier>{A1B2C3D4-2005-4000-8000-000000000005}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\persistence">
+      <UniqueIdentifier>{A1B2C3D4-2006-4000-8000-000000000006}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\process">
+      <UniqueIdentifier>{A1B2C3D4-2007-4000-8000-000000000007}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\util">
+      <UniqueIdentifier>{A1B2C3D4-2008-4000-8000-000000000008}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\vfs">
+      <UniqueIdentifier>{A1B2C3D4-2009-4000-8000-000000000009}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\view">
+      <UniqueIdentifier>{A1B2C3D4-2010-4000-8000-000000000010}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Source Files (root) -->
+    <ClCompile Include="..\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <!-- Source Files \ app -->
+    <ClCompile Include="..\src\app\ConsoleApp.cpp">
+      <Filter>Source Files\app</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\app\MenuConsole.cpp">
+      <Filter>Source Files\app</Filter>
+    </ClCompile>
+    <!-- Source Files \ auth -->
+    <ClCompile Include="..\src\auth\UserManager.cpp">
+      <Filter>Source Files\auth</Filter>
+    </ClCompile>
+    <!-- Source Files \ ipc -->
+    <ClCompile Include="..\src\ipc\InstanceGuard.cpp">
+      <Filter>Source Files\ipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\ipc\NamedPipeClient.cpp">
+      <Filter>Source Files\ipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\ipc\NamedPipeServer.cpp">
+      <Filter>Source Files\ipc</Filter>
+    </ClCompile>
+    <!-- Source Files \ kernel -->
+    <ClCompile Include="..\src\kernel\CommandDispatcher.cpp">
+      <Filter>Source Files\kernel</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\kernel\Kernel.cpp">
+      <Filter>Source Files\kernel</Filter>
+    </ClCompile>
+    <!-- Source Files \ memory -->
+    <ClCompile Include="..\src\memory\MemoryManager.cpp">
+      <Filter>Source Files\memory</Filter>
+    </ClCompile>
+    <!-- Source Files \ persistence -->
+    <ClCompile Include="..\src\persistence\SnapshotStore.cpp">
+      <Filter>Source Files\persistence</Filter>
+    </ClCompile>
+    <!-- Source Files \ process -->
+    <ClCompile Include="..\src\process\ProcessManager.cpp">
+      <Filter>Source Files\process</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\process\Scheduler.cpp">
+      <Filter>Source Files\process</Filter>
+    </ClCompile>
+    <!-- Source Files \ vfs -->
+    <ClCompile Include="..\src\vfs\VirtualFileSystem.cpp">
+      <Filter>Source Files\vfs</Filter>
+    </ClCompile>
+    <!-- Source Files \ view -->
+    <ClCompile Include="..\src\view\OverviewRenderer.cpp">
+      <Filter>Source Files\view</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Header Files \ app -->
+    <ClInclude Include="..\src\app\ConsoleApp.h">
+      <Filter>Header Files\app</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\app\MenuConsole.h">
+      <Filter>Header Files\app</Filter>
+    </ClInclude>
+    <!-- Header Files \ auth -->
+    <ClInclude Include="..\src\auth\UserAccount.h">
+      <Filter>Header Files\auth</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\auth\UserManager.h">
+      <Filter>Header Files\auth</Filter>
+    </ClInclude>
+    <!-- Header Files \ ipc -->
+    <ClInclude Include="..\src\ipc\InstanceGuard.h">
+      <Filter>Header Files\ipc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\ipc\NamedPipeClient.h">
+      <Filter>Header Files\ipc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\ipc\NamedPipeServer.h">
+      <Filter>Header Files\ipc</Filter>
+    </ClInclude>
+    <!-- Header Files \ kernel -->
+    <ClInclude Include="..\src\kernel\CommandDispatcher.h">
+      <Filter>Header Files\kernel</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\kernel\CommandTypes.h">
+      <Filter>Header Files\kernel</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\kernel\Kernel.h">
+      <Filter>Header Files\kernel</Filter>
+    </ClInclude>
+    <!-- Header Files \ memory -->
+    <ClInclude Include="..\src\memory\MemoryBlock.h">
+      <Filter>Header Files\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\memory\MemoryManager.h">
+      <Filter>Header Files\memory</Filter>
+    </ClInclude>
+    <!-- Header Files \ persistence -->
+    <ClInclude Include="..\src\persistence\SnapshotStore.h">
+      <Filter>Header Files\persistence</Filter>
+    </ClInclude>
+    <!-- Header Files \ process -->
+    <ClInclude Include="..\src\process\PCB.h">
+      <Filter>Header Files\process</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\process\ProcessManager.h">
+      <Filter>Header Files\process</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\process\Scheduler.h">
+      <Filter>Header Files\process</Filter>
+    </ClInclude>
+    <!-- Header Files \ util -->
+    <ClInclude Include="..\src\util\BlockingQueue.h">
+      <Filter>Header Files\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\util\Logger.h">
+      <Filter>Header Files\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\util\StringUtil.h">
+      <Filter>Header Files\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\util\TablePrinter.h">
+      <Filter>Header Files\util</Filter>
+    </ClInclude>
+    <!-- Header Files \ vfs -->
+    <ClInclude Include="..\src\vfs\VirtualFileSystem.h">
+      <Filter>Header Files\vfs</Filter>
+    </ClInclude>
+    <!-- Header Files \ view -->
+    <ClInclude Include="..\src\view\OverviewRenderer.h">
+      <Filter>Header Files\view</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
