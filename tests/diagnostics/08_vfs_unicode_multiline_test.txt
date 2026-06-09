@@ -1,0 +1,10 @@
+reset_system
+register alice 123
+login alice 123
+touch_file 课程笔记
+write_file 课程笔记 第一行\n第二行\n第三行
+read_file 课程笔记
+ls_file
+rm_file 课程笔记
+ls_file
+exit

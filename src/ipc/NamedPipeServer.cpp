@@ -54,6 +54,9 @@ bool NamedPipeServer::isRunning() const {
     return running_.load();
 }
 
+// serverLoop：管道服务器主循环。
+// 生命周期：预创建管道 → 阻塞等待 Client 连接 → 读命令 → 调用 Kernel 执行 → 写响应 → 断开 → 预创建下一管道 → 循环。
+// 预创建策略消除了管道实例创建和 Client 连接之间的时间间隙，避免 Client 超时等待。
 void NamedPipeServer::serverLoop() {
     // 服务端循环一次处理一个客户端连接：读命令、执行、写响应，然后重新创建下一条管道实例。
     // 预创建第一个管道实例，确保在进入循环之前管道名称已存在

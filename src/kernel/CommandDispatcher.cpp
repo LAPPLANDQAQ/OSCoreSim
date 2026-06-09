@@ -17,7 +17,7 @@ namespace oscore {
 namespace {
 
 [[nodiscard]] std::string allocUsageText() {
-    return "Usage: alloc <sizeKB>\nor: alloc <name> <sizeKB>";
+    return "用法：alloc <大小KB>或 alloc <名称> <大小KB>";
 }
 
 [[nodiscard]] bool isValidMemoryTag(const std::string& value) {
@@ -70,7 +70,6 @@ Command CommandDispatcher::parse(const std::string& line) const {
     Command command;
     command.rawLine = line;
 
-    // 原始命令只做轻量拆词：命令名统一小写，参数按空白分隔；复杂状态校验放在 dispatch 分支内。
     std::istringstream stream(line);
     std::string token;
     if (!(stream >> token)) {
@@ -100,11 +99,10 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "exit" || command.name == "quit") {
-        return {true, "Shutting down OS simulator.", true};
+        return {true, "正在关闭 OS 模拟器。", true};
     }
 
     if (command.name == "clear") {
-        // 课程演示中保持跨平台：不直接调用 system("cls")，由前端打印空行模拟清屏。
         return {true, std::string(30, '\n'), false};
     }
 
@@ -114,7 +112,7 @@ CommandResponse CommandDispatcher::dispatch(
 
     if (command.name == "register") {
         if (command.arguments.size() != 2) {
-            return {false, "Usage: register <username> <password>", false};
+            return {false, "用法：register <用户名> <密码>", false};
         }
 
         std::string message;
@@ -124,7 +122,7 @@ CommandResponse CommandDispatcher::dispatch(
 
     if (command.name == "login") {
         if (command.arguments.size() != 2) {
-            return {false, "Usage: login <username> <password>", false};
+            return {false, "用法：login <用户名> <密码>", false};
         }
 
         std::string message;
@@ -143,13 +141,12 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "create_pcb") {
-        // 进程和内存属于用户态资源，必须登录后才能创建，避免匿名命令污染 PCB/内存表。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
         }
         if (command.arguments.size() != 4 && command.arguments.size() != 5) {
-            return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+            return {false, "用法：create_pcb <进程名> <内存KB> <优先级> <总时间> [父PID]", false};
         }
 
         std::uint32_t memKB = 0;
@@ -159,22 +156,21 @@ CommandResponse CommandDispatcher::dispatch(
         if (!parseUint32Strict(command.arguments[1], memKB) ||
             !parseIntStrict(command.arguments[2], priority) ||
             !parseUint32Strict(command.arguments[3], totalTime)) {
-            return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+            return {false, "用法：create_pcb <进程名> <内存KB> <优先级> <总时间> [父PID]", false};
         }
         if (command.arguments.size() == 5) {
             std::uint32_t parsedPpid = 0;
             if (!parseUint32Strict(command.arguments[4], parsedPpid)) {
-                return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+                return {false, "用法：create_pcb <进程名> <内存KB> <优先级> <总时间> [父PID]", false};
             }
             ppid = parsedPpid;
         }
 
         if (command.arguments[0].empty() || memKB == 0 || totalTime == 0 || priority < 0 || priority > 15) {
-            return {false, "Usage: create_pcb <name> <memKB> <priority> <totalTime> [ppid]", false};
+            return {false, "用法：create_pcb <进程名> <内存KB> <优先级> <总时间> [父PID]", false};
         }
 
         const auto owner = userManager.currentUser();
-        // P4 后进程创建必须先申请真实内存；若 PCB 创建失败，再按 PID 回滚内存块，避免泄漏。
         const auto expectedPid = processManager.nextPid();
         std::uint32_t memStart = 0;
         std::string memoryMessage;
@@ -197,14 +193,12 @@ CommandResponse CommandDispatcher::dispatch(
         if (!ok) {
             std::string rollbackMessage;
             memoryManager.freeByPid(owner, expectedPid, rollbackMessage);
-            return {false, message + "\n[ROLLBACK] " + rollbackMessage, false};
+            return {false, message + "\n" "回滚：" + rollbackMessage, false};
         }
         return {ok, message, false};
     }
 
     if (command.name == "alloc") {
-        // alloc 是手动内存实验命令，只产生 KERNEL/manual 内存块，不创建 PCB。
-        // 兼容旧格式 alloc <sizeKB>，新格式 alloc <name> <sizeKB> 仅把 name 写入 MemoryBlock::tag。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -235,17 +229,16 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "free_mem") {
-        // free_mem 只释放当前用户通过 alloc 得到的手动块；进程块必须走 kill_pcb 或 swap_out。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
         }
         if (command.arguments.size() != 1) {
-            return {false, "Usage: free_mem <addr>", false};
+            return {false, "用法：free_mem <地址>", false};
         }
         std::uint32_t addr = 0;
         if (!parseUint32Strict(command.arguments[0], addr)) {
-            return {false, "Usage: free_mem <addr>", false};
+            return {false, "用法：free_mem <地址>", false};
         }
         std::string message;
         const bool ok = memoryManager.freeByAddress(userManager.currentUser(), addr, message);
@@ -258,7 +251,7 @@ CommandResponse CommandDispatcher::dispatch(
             return loginResponse;
         }
         if (!command.arguments.empty()) {
-            return {false, std::string("Usage: ") + command.name, false};
+            return {false, std::string("用法：") + command.name, false};
         }
         if (command.name == "show_mem") {
             return {true, memoryManager.showMemory(userManager.currentUser()), false};
@@ -267,13 +260,12 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "set_alloc_algo") {
-        // 分配算法切换影响后续 allocateLocked 的空闲块选择，不改变现有分区布局。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
         }
         if (command.arguments.size() != 1) {
-            return {false, "Usage: set_alloc_algo <FF|BF|WF>", false};
+            return {false, "用法：set_alloc_algo <FF|BF|WF>", false};
         }
         std::string message;
         const bool ok = memoryManager.setAlgorithm(command.arguments[0], message);
@@ -286,10 +278,9 @@ CommandResponse CommandDispatcher::dispatch(
             return loginResponse;
         }
         if (!command.arguments.empty()) {
-            return {false, "Usage: compact", false};
+            return {false, "用法：compact", false};
         }
         auto result = memoryManager.compact();
-        // 内存紧缩会移动 PROCESS 块，必须同步更新对应 PCB.memStart。
         for (const auto& [pid, newStart] : result.pidNewStart) {
             processManager.updateProcessMemoryStart(pid, newStart);
         }
@@ -302,26 +293,26 @@ CommandResponse CommandDispatcher::dispatch(
             return loginResponse;
         }
         if (command.arguments.size() > 1) {
-            return {false, "Usage: pgfault [pid]", false};
+            return {false, "用法：pgfault [pid]", false};
         }
         std::ostringstream output;
         if (command.arguments.empty()) {
-            output << "[PAGE FAULT] Generic simulated page fault.";
+            output << "缺页中断：通用模拟缺页。";
         } else {
             std::uint32_t pid = 0;
             if (!parseUint32Strict(command.arguments[0], pid)) {
-                return {false, "Usage: pgfault [pid]", false};
+                return {false, "用法：pgfault [pid]", false};
             }
             if (!processManager.hasProcess(userManager.currentUser(), pid)) {
-                return {false, "Page fault failed: PID does not exist or access denied.", false};
+                return {false, "缺页失败：PID 不存在或访问被拒绝。", false};
             }
-            output << "[PAGE FAULT] PID=" << pid << " triggered a simulated page fault.";
+            output << "缺页中断：PID=" << pid << " 触发了模拟缺页。";
         }
-        output << "\n[HANDLER] Save current context."
-               << "\n[HANDLER] Locate missing page."
-               << "\n[HANDLER] Simulate loading page into memory."
-               << "\n[HANDLER] Restore process context."
-               << "\n[OK] Page fault handled.";
+        output << "\n处理器：保存当前上下文。"
+               << "\n处理器：定位缺失页面。"
+               << "\n处理器：模拟加载页面到内存。"
+               << "\n处理器：恢复进程上下文。"
+               << "\n[成功] 缺页处理完成。";
         return {true, output.str(), false};
     }
 
@@ -331,18 +322,18 @@ CommandResponse CommandDispatcher::dispatch(
             return loginResponse;
         }
         if (command.arguments.size() != 1) {
-            return {false, "Usage: swap_out <pid>", false};
+            return {false, "用法：swap_out <pid>", false};
         }
         std::uint32_t pid = 0;
         if (!parseUint32Strict(command.arguments[0], pid)) {
-            return {false, "Usage: swap_out <pid>", false};
+            return {false, "用法：swap_out <pid>", false};
         }
         const auto owner = userManager.currentUser();
         if (!processManager.hasProcess(owner, pid)) {
-            return {false, "Swap out failed: PID does not exist or access denied.", false};
+            return {false, "换出失败：PID 不存在或访问被拒绝。", false};
         }
         if (processManager.isSwappedOut(owner, pid)) {
-            return {false, "Swap out failed: process is already swapped out.", false};
+            return {false, "换出失败：该进程已被换出。", false};
         }
 
         std::string memoryMessage;
@@ -366,14 +357,14 @@ CommandResponse CommandDispatcher::dispatch(
         }
         if (command.arguments.size() != 1) {
             std::ostringstream usage;
-            usage << "Usage: " << command.name << " <pid>";
+            usage << "用法：" << command.name << " <pid>";
             return {false, usage.str(), false};
         }
 
         std::uint32_t pid = 0;
         if (!parseUint32Strict(command.arguments[0], pid)) {
             std::ostringstream usage;
-            usage << "Usage: " << command.name << " <pid>";
+            usage << "用法：" << command.name << " <pid>";
             return {false, usage.str(), false};
         }
 
@@ -389,7 +380,6 @@ CommandResponse CommandDispatcher::dispatch(
             std::vector<std::uint32_t> removedPids;
             ok = processManager.killProcess(owner, pid, removedPids, message);
             if (ok) {
-                // kill_pcb 会递归删除子树，随后逐个释放子树中所有进程的物理内存。
                 std::ostringstream released;
                 for (const auto removedPid : removedPids) {
                     std::string freeMessage;
@@ -417,13 +407,13 @@ CommandResponse CommandDispatcher::dispatch(
             return loginResponse;
         }
         if (command.arguments.size() != 2) {
-            return {false, "Usage: renice <pid> <newPriority>", false};
+            return {false, "用法：renice <pid> <新优先级>", false};
         }
 
         std::uint32_t pid = 0;
         int newPriority = 0;
         if (!parseUint32Strict(command.arguments[0], pid) || !parseIntStrict(command.arguments[1], newPriority)) {
-            return {false, "Usage: renice <pid> <newPriority>", false};
+            return {false, "用法：renice <pid> <新优先级>", false};
         }
 
         std::string message;
@@ -438,7 +428,7 @@ CommandResponse CommandDispatcher::dispatch(
         }
         if (!command.arguments.empty()) {
             std::ostringstream usage;
-            usage << "Usage: " << command.name;
+            usage << "用法：" << command.name;
             return {false, usage.str(), false};
         }
 
@@ -452,44 +442,40 @@ CommandResponse CommandDispatcher::dispatch(
         return {true, processManager.readyQueueSnapshot(owner), false};
     }
 
-    // P8-P9: save/load 和 VFS/overview 命令均由 Kernel 在 executeRequest 中优先路由处理。
-    // CommandDispatcher 仅处理仍在此处分发的通用命令（用户、进程、内存）。
-
     if (command.name == "save") {
-        return {false, "Persistence command must be handled by Kernel.", false};
+        return {false, "持久化命令必须由 Kernel 处理。", false};
     }
 
     if (command.name == "load") {
-        return {false, "Persistence command must be handled by Kernel.", false};
+        return {false, "持久化命令必须由 Kernel 处理。", false};
     }
 
     std::ostringstream output;
-    output << "Unknown command: " << command.name << '\n'
-           << "Type 'help' to show available commands.";
+    output << "[错误] 未知命令：" << command.name << '\n'
+           << "[提示] 输入 help 查看可用命令。";
     return {false, output.str(), false};
 }
 
 std::string CommandDispatcher::helpText() const {
     std::ostringstream output;
-    output << "可用命令：\n"
-           << "  help    - 显示命令列表\n"
-           << "  status  - 显示内核状态摘要\n"
-           << "  clear   - 清空当前控制台显示区域\n"
-           << "  exit    - 安全退出模拟器\n"
-           << "  quit    - 安全退出模拟器\n"
-           << "\n"
-           << "持久化命令：\n"
-           << "  save    将完整系统状态保存到二进制快照文件\n"
-           << "  load    从二进制快照文件加载完整系统状态\n"
-           << "\n"
-           << "用户命令：\n"
-           << "  register <username> <password>   注册新用户\n"
-           << "  login <username> <password>      登录模拟器\n"
-           << "  logout                           退出当前登录\n"
-           << "  whoami                           显示当前登录用户\n"
-           << "\n"
-           << "进程命令：\n"
-           << "  create_pcb <name> <memKB> <priority> <totalTime> [ppid]\n"
+    output << "可用命令：\n\n"
+
+           << "【系统命令】\n"
+           << "  help       显示命令列表\n"
+           << "  status     显示内核状态摘要\n"
+           << "  clear      清空当前控制台显示区域\n"
+           << "  exit       安全退出模拟器\n"
+           << "  quit       安全退出模拟器\n"
+           << "  reset_system 重置系统到干净状态\n"
+
+           << "\n【用户命令】\n"
+           << "  register <用户名> <密码>   注册新用户\n"
+           << "  login <用户名> <密码>      登录系统\n"
+           << "  logout                      退出当前账号\n"
+           << "  whoami                      显示当前账号\n"
+
+           << "\n【进程命令】\n"
+           << "  create_pcb <进程名> <内存KB> <优先级> <总时间> [父PID]\n"
            << "  kill_pcb <pid>\n"
            << "  block_pcb <pid>\n"
            << "  wakeup_pcb <pid>\n"
@@ -498,39 +484,41 @@ std::string CommandDispatcher::helpText() const {
            << "  ptree\n"
            << "  suspend <pid>\n"
            << "  resume <pid>\n"
-           << "  renice <pid> <newPriority>\n"
+           << "  renice <pid> <新优先级>\n"
            << "  readyq\n"
-           << "\n"
-           << "内存命令：\n"
-           << "  alloc <sizeKB>              手动分配内存，Tag 默认为 manual\n"
-           << "  alloc <name> <sizeKB>       手动分配命名内存区\n"
-           << "  free_mem <addr>             按起始地址释放手动分配内存\n"
-           << "  show_mem                    显示内存分区表和 ASCII 内存图\n"
-           << "  compact                     执行内存紧缩并合并空闲分区\n"
-           << "  mem_stat                    显示内存使用率和碎片统计\n"
-           << "  set_alloc_algo <FF|BF|WF>   切换动态分区分配算法\n"
-           << "  pgfault [pid]               模拟缺页中断\n"
-           << "  swap_out <pid>              模拟进程换出\n"
-           << "\n"
-           << "调度命令：\n"
+
+           << "\n【内存命令】\n"
+           << "  alloc <大小KB>              手动分配内存，Tag 默认为 manual\n"
+           << "  alloc <名称> <大小KB>       手动分配命名内存区\n"
+           << "  free_mem <地址>            按起始地址释放手动分配内存\n"
+           << "  show_mem                   显示内存分区表和 ASCII 内存图\n"
+           << "  compact                    执行内存紧缩并合并空闲分区\n"
+           << "  mem_stat                   显示内存使用率和碎片统计\n"
+           << "  set_alloc_algo <FF|BF|WF>  切换动态分区分配算法\n"
+           << "  pgfault [pid]              模拟缺页中断\n"
+           << "  swap_out <pid>             模拟进程换出\n"
+
+           << "\n【调度命令】\n"
+           << "  step            执行一次单步调度并打印决策过程\n"
            << "  start_sched     启动自动 MLFQ 调度\n"
            << "  stop_sched      停止自动调度\n"
            << "  restart_sched   清理就绪队列后重启调度器\n"
-           << "  step            执行一次单步调度并打印决策过程\n"
-           << "\n"
-           << "\n"
-           << "可视化命令：\n"
+
+           << "\n【持久化命令】\n"
+           << "  save    将完整系统状态保存到二进制快照文件\n"
+           << "  load    从二进制快照文件加载完整系统状态\n"
+
+           << "\n【可视化命令】\n"
            << "  overview    显示进程树、内存图、MLFQ 队列和系统摘要\n"
-           << "\n"
-           << "虚拟文件命令：\n"
-           << "  touch_file <name>             创建空虚拟文件\n"
-           << "  write_file <name> <content>   写入虚拟文件内容\n"
-           << "  read_file <name>              读取虚拟文件内容\n"
-           << "  ls_file                       列出当前用户的虚拟文件\n"
-           << "  rm_file <name>                删除虚拟文件\n"
-           << "\n"
-           << "VFS、持久化和 IPC 相关命令均已集成到上述命令中。";
-    output << "\nAliases:\n"
+
+           << "\n【虚拟文件命令】\n"
+           << "  touch_file <文件名>             创建空虚拟文件（支持中文文件名）\n"
+           << "  write_file <文件名> <内容>   写入内容，支持\\n \\r \\t \\\\ \\\" 转义\n"
+           << "  read_file <文件名>             读取文件内容\n"
+           << "  ls_file                      列出当前用户的虚拟文件\n"
+           << "  rm_file <文件名>             删除虚拟文件\n";
+
+    output << "\n别名：\n"
            << "  start     -> start_sched\n"
            << "  stop      -> stop_sched\n"
            << "  restart   -> restart_sched\n";
@@ -542,23 +530,23 @@ std::string CommandDispatcher::statusText(
     const ProcessManager& processManager,
     const MemoryManager& memoryManager) const {
     std::ostringstream output;
-    output << "=== Kernel Status ===\n"
-           << "Worker Thread: " << (context.workerRunning ? "RUNNING" : "STOPPED") << '\n'
-           << "Scheduler: " << (context.schedulerRunning ? "RUNNING" : "STOPPED") << '\n'
-           << "Scheduler Owner: " << (context.schedulerOwner.empty() ? "<none>" : context.schedulerOwner) << '\n'
-           << "Auto Interval: " << context.schedulerIntervalMs << "ms\n"
-           << "Snapshot File: " << context.snapshotPath << '\n'
-           << "Auto Load: " << context.autoLoadStatus << '\n'
-           << "Current User: " << (context.username.empty() ? "<none>" : context.username) << '\n'
-           << "Process Count: " << (context.username.empty() ? 0 : processManager.processCount(context.username)) << '\n'
+    output << "=== 内核状态 / Kernel Status ===\n"
+           << "工作线程     : " << (context.workerRunning ? "运行中" : "已停止") << '\n'
+           << "调度器       : " << (context.schedulerRunning ? "运行中" : "已停止") << '\n'
+           << "调度用户     : " << (context.schedulerOwner.empty() ? "无" : context.schedulerOwner) << '\n'
+           << "自动间隔     : " << context.schedulerIntervalMs << " ms\n"
+           << "快照文件     : " << context.snapshotPath << '\n'
+           << "自动加载     : " << context.autoLoadStatus << '\n'
+           << "当前用户     : " << (context.username.empty() ? "无" : context.username) << '\n'
+           << "进程数量     : " << (context.username.empty() ? 0 : processManager.processCount(context.username)) << '\n'
            << processManager.readyQueueSnapshot(context.username) << '\n'
-           << "Memory Manager: ENABLED\n"
-           << "Total Memory: " << memoryManager.totalMemoryKB() << " KB\n"
-           << "Allocation Algorithm: " << memoryManager.currentAlgorithmName() << '\n'
-           << "Used: " << memoryManager.usedMemoryKB() << " KB\n"
-           << "Free: " << memoryManager.freeMemoryKB() << " KB\n"
-           << "Request ID: " << context.requestId << '\n'
-           << "Source: " << (context.source == CommandSource::LocalConsole ? "local console" : "remote client");
+           << "内存管理器   : 已启用\n"
+           << "内存总量     : " << memoryManager.totalMemoryKB() << " KB\n"
+           << "分配算法     : " << memoryManager.currentAlgorithmName() << '\n'
+           << "已用内存     : " << memoryManager.usedMemoryKB() << " KB\n"
+           << "空闲内存     : " << memoryManager.freeMemoryKB() << " KB\n"
+           << "请求编号     : " << context.requestId << '\n'
+           << "请求来源     : " << (context.source == CommandSource::LocalConsole ? "本地控制台" : "远程客户端");
     return output.str();
 }
 
@@ -567,7 +555,7 @@ bool CommandDispatcher::requireLogin(const UserManager& userManager, CommandResp
         return true;
     }
 
-    response = {false, "This command requires login. Please run: login <username> <password>", false};
+    response = {false, "[提示] 当前命令需要先登录。\n用法：login <用户名> <密码>", false};
     return false;
 }
 

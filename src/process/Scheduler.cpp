@@ -7,104 +7,138 @@
 
 namespace oscore {
 
+// ============================================================================
+// MLFQ 单步调度算法（step）
+// ============================================================================
+//
+// 每次 step 执行一次完整的调度决策周期，分为 5 个阶段：
+//
+// [1] 调度前  — 记录当前就绪队列快照，供日志对比
+// [2] 选择    — 从 Q0→Q1→Q2 扫描，选取第一个属于当前用户的 READY 进程
+//              清理途中遇到的无效条目（状态非 READY、已换出、队列层级不匹配等）
+// [3] 执行    — 将进程标记为 RUNNING，执行至多 quantum 个 tick
+//              每 tick：executedTime++  remainingTime--  timeSliceLeft--
+// [4] 结果    — 判断三种结果：
+//              a) remainingTime==0 → 进程完成，递归删除子树并释放内存
+//              b) 用满时间片但未完成 → 降级到下一级队列（Q0→Q1→Q2），回到 READY
+//              c) 未用满时间片 → 保留在原队列，回到 READY
+// [5] 调度后  — 记录调度后队列快照
+//
+// 关键设计：
+// - 时间片大小：Q0=2, Q1=4, Q2=8（高优先级短时间片 = 响应优先，低优先级长时间片 = 吞吐优先）
+// - 队列降级：进程用满时间片说明是 CPU 密集型 → 向低优先级移动，给交互型进程让路
+// - 用户隔离：调度器只扫描当前用户的 READY 进程，不触碰其他用户的进程
+// ============================================================================
+
 std::string Scheduler::step(
     const std::string& owner,
     ProcessManager& processManager,
     MemoryManager& memoryManager) {
     std::ostringstream output;
-    output << "=== Scheduler Step ===\n\n";
+    output << "=== 调度单步 / Scheduler Step ===\n\n";
 
-    // 每次 step 都是一次完整调度决策：先记录队列快照，再从 Q0 到 Q2 选择当前用户 READY 进程。
+    // ---------- [1] 调度前：记录就绪队列快照 ----------
     const auto before = processManager.readyQueueSnapshot(owner);
-    output << "[Before]\n" << before << "\n\n";
+    output << "[调度前]\n" << before << "\n\n";
 
+    // ---------- [2] 选择进程 ----------
+    // 先清理无效条目（状态不为 READY、已换出、队列层级不一致等）
     const auto cleaned = processManager.cleanupInvalidReadyQueueEntries(owner);
+    // pickNextReadyProcess 从 Q0 开始扫描，返回第一个属于 owner 的 READY 进程
     const auto selectedPid = processManager.pickNextReadyProcess(owner);
+
+    // 情况 A：没有可调度的进程 → CPU 空闲
     if (!selectedPid.has_value()) {
-        output << "[Select]\n"
-               << "No READY process found.\n\n"
-               << "[Result]\n"
-               << "CPU is idle.\n\n"
-               << "[After]\n"
+        output << "[选择]\n"
+               << "未找到 READY 进程。\n\n"
+               << "[结果]\n"
+               << "CPU 空闲。\n\n"
+               << "[调度后]\n"
                << processManager.readyQueueSnapshot(owner);
         return output.str();
     }
 
+    // 获取进程副本（快照），避免在执行过程中引用失效
     auto selected = processManager.getProcessCopy(*selectedPid);
     if (!selected.has_value()) {
-        output << "[Select]\n"
-               << "Selected PID disappeared before running.\n\n"
-               << "[Result]\n"
-               << "CPU is idle.\n\n"
-               << "[After]\n"
+        output << "[选择]\n"
+               << "选中的 PID 在执行前消失。\n\n"
+               << "[结果]\nCPU 空闲。\n\n"
+               << "[调度后]\n"
                << processManager.readyQueueSnapshot(owner);
         return output.str();
     }
 
+    // 当前进程所在队列层级（降级前）
     const int oldQueue = selected->queueLevel;
-    // 时间片只由队列层级决定：Q0 最短、Q2 最长，体现多级反馈队列的响应性和吞吐折中。
+    // 时间片由队列层级决定：Q0=2, Q1=4, Q2=8
     const auto quantum = static_cast<std::uint32_t>(quantumForQueue(oldQueue));
-    output << "[Select]\n"
-           << "Scanning Q0 -> Q1 -> Q2";
-    if (!cleaned.empty()) {
-        output << "\nRemoved invalid ready queue entries:";
-        for (const auto pid : cleaned) {
-            output << ' ' << pid;
-        }
-    }
-    output << "\nScanning " << queueName(oldQueue) << " -> found PID=" << selected->pid << '\n'
-           << "Selected PID=" << selected->pid
-           << ", name=" << selected->name
-           << ", queue=" << queueName(oldQueue)
-           << ", quantum=" << quantum << "\n\n";
 
+    // 记录选择过程
+    output << "[选择]\n"
+           << "扫描 Q0 -> Q1 -> Q2";
+    if (!cleaned.empty()) {
+        output << "\n已移除无效就绪队列条目:";
+        for (const auto pid : cleaned) output << ' ' << pid;
+    }
+    output << "\n扫描 " << queueName(oldQueue)
+           << " -> 找到 PID=" << selected->pid << '\n'
+           << "选中 PID=" << selected->pid
+           << ", 名称=" << selected->name
+           << ", 队列=" << queueName(oldQueue)
+           << ", 时间片=" << quantum << "\n\n";
+
+    // ---------- [3] 执行 tick ----------
+    // markRunning 做三件事：从就绪队列移除 + 状态改为 RUNNING + 重置时间片（如需要）
     if (!processManager.markRunning(selected->pid)) {
-        output << "[Run]\n"
-               << "Failed to switch PID=" << selected->pid << " to RUNNING.\n\n"
-               << "[Result]\n"
-               << "CPU is idle.\n\n"
-               << "[After]\n"
+        output << "[执行]\n"
+               << "切换 PID=" << selected->pid << " 到 RUNNING 失败。\n\n"
+               << "[结果]\nCPU 空闲。\n\n"
+               << "[调度后]\n"
                << processManager.readyQueueSnapshot(owner);
         return output.str();
     }
 
-    output << "[Run]\n";
+    output << "[执行]\n";
     std::string tickLog;
-    // tickProcess 负责更新 executedTime、remainingTime 和 timeSliceLeft；Scheduler 只决定本轮最多运行多少 tick。
+    // tickProcess 逐 tick 执行：executedTime++  remainingTime--  timeSliceLeft--
+    // 循环提前终止条件：remainingTime 归零或 timeSliceLeft 耗尽
     if (!processManager.tickProcess(selected->pid, quantum, tickLog)) {
+        // tick 执行失败 → 恢复为 READY 并重新入队
         (void)processManager.markReady(selected->pid);
         (void)processManager.enqueueReadyProcess(selected->pid);
         output << tickLog << "\n\n"
-               << "[Result]\n"
-               << "State restored to READY because tick execution failed.\n\n"
-               << "[After]\n"
+               << "[结果]\n"
+               << "tick 执行失败，状态恢复为 READY。\n\n"
+               << "[调度后]\n"
                << processManager.readyQueueSnapshot(owner);
         return output.str();
     }
     output << tickLog << "\n\n";
 
+    // ---------- [4] 判断结果 ----------
+    // 重新获取进程副本以读取执行后的状态
     const auto afterRun = processManager.getProcessCopy(selected->pid);
     if (!afterRun.has_value()) {
-        output << "[Result]\n"
-               << "PID=" << selected->pid << " disappeared after running.\n\n"
-               << "[After]\n"
+        output << "[结果]\n"
+               << "PID=" << selected->pid << " 在执行后消失。\n\n"
+               << "[调度后]\n"
                << processManager.readyQueueSnapshot(owner);
         return output.str();
     }
 
-    // 重新读取 PCB 副本，避免使用运行前快照判断完成状态。
+    // 实际消耗的 tick 数 = 执行后 executedTime - 执行前 executedTime
     const auto ticksUsed = afterRun->executedTime - selected->executedTime;
-    output << "[Result]\n";
+    output << "[结果]\n";
+
+    // --- 结果 A：进程完成（remainingTime == 0）---
     if (afterRun->remainingTime == 0) {
         std::vector<std::uint32_t> removedPids;
         std::string killMessage;
-        // 完成进程按 kill 子树处理，确保父进程结束时子进程也被清理。
+        // killProcess 递归删除进程子树
         processManager.killProcess(owner, selected->pid, removedPids, killMessage);
-
-        output << "PID=" << selected->pid << " completed.\n"
-               << killMessage;
-
-        // 进程完成后必须释放物理内存；如果完成的是父进程，沿用 kill_pcb 的子树清理策略。
+        output << "PID=" << selected->pid << " 已完成。\n" << killMessage;
+        // 释放子树中所有进程的物理内存
         for (const auto removedPid : removedPids) {
             std::string memoryMessage;
             if (memoryManager.freeByPid(owner, removedPid, memoryMessage)) {
@@ -112,49 +146,47 @@ std::string Scheduler::step(
             }
         }
     } else {
-        // 未完成的进程回到 READY；如果耗尽完整时间片，则按 MLFQ 规则降级。
+        // --- 结果 B/C：进程未完成 ---
+        // 判断是否用满了完整时间片
         const bool usedFullQuantum = ticksUsed >= quantum;
+
         if (usedFullQuantum) {
-            // 用完整时间片仍未完成，说明该进程偏 CPU 密集，按 MLFQ 规则向低优先级队列移动。
+            // 结果 B：用满时间片 → 降级到下一级队列（Q0→Q1, Q1→Q2, Q2 不变）
+            // 这是 MLFQ 的核心机制：CPU 密集型进程逐级下移，交互型短进程留在高优先级
             (void)processManager.demoteProcess(selected->pid);
         }
+        // 进程回到 READY 状态并重新入队（保持或更新后的队列层级）
         (void)processManager.markReady(selected->pid);
         (void)processManager.enqueueReadyProcess(selected->pid);
 
         const auto finalPcb = processManager.getProcessCopy(selected->pid);
-        output << "PID=" << selected->pid << " used "
-               << (usedFullQuantum ? "full quantum" : "partial quantum")
-               << " but not finished.\n";
+        output << "PID=" << selected->pid << " 已用 "
+               << (usedFullQuantum ? "完整时间片" : "部分时间片")
+               << "但未完成。\n";
+        if (finalPcb.has_value() && usedFullQuantum) {
+            output << "降级: " << queueName(oldQueue)
+                   << " -> " << queueName(finalPcb->queueLevel) << '\n';
+        }
         if (finalPcb.has_value()) {
-            if (usedFullQuantum) {
-                output << "Demote: " << queueName(oldQueue) << " -> " << queueName(finalPcb->queueLevel) << '\n';
-            }
-            output << "State: RUNNING -> READY";
+            output << "状态: RUNNING -> READY";
         }
     }
 
-    output << "\n\n[After]\n"
+    // ---------- [5] 调度后：记录最终队列快照 ----------
+    output << "\n\n[调度后]\n"
            << processManager.readyQueueSnapshot(owner);
     return output.str();
 }
 
-bool Scheduler::isRunning() const {
-    return running_;
-}
-
-void Scheduler::setRunning(bool running) {
-    running_ = running;
-}
+bool Scheduler::isRunning() const { return running_; }
+void Scheduler::setRunning(bool running) { running_ = running; }
 
 int Scheduler::quantumForQueue(int queueLevel) const {
-    // Q0/Q1/Q2 的时间片与 ProcessManager 保持一致，课程演示时可直接对应 readyq 输出。
+    // Q0/Q1/Q2 的时间片与 ProcessManager 保持一致
     switch (queueLevel) {
-    case 0:
-        return 2;
-    case 1:
-        return 4;
-    default:
-        return 8;
+    case 0: return 2;
+    case 1: return 4;
+    default: return 8;
     }
 }
 

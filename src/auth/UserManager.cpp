@@ -17,7 +17,7 @@ bool UserManager::registerUser(const std::string& username, const std::string& p
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (users_.find(username) != users_.end()) {
-        message = "Register failed: username already exists.";
+        message = "[失败] 注册失败：用户名已存在。";
         return false;
     }
 
@@ -27,26 +27,26 @@ bool UserManager::registerUser(const std::string& username, const std::string& p
     account.passwordHash = hashPassword(account.salt, password);
 
     users_.emplace(username, std::move(account));
-    message = "Register success: user '" + username + "' created.";
+    message = "[成功] 注册成功：用户 '" + username + "' 已创建。";
     return true;
 }
 
 bool UserManager::login(const std::string& username, const std::string& password, std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (currentUser_.has_value()) {
-        message = "Login failed: user '" + *currentUser_ + "' is already logged in.";
+        message = "[失败] 登录失败：用户 '" + *currentUser_ + "' 已登录，请先退出。";
         return false;
     }
 
     auto it = users_.find(username);
     if (it == users_.end()) {
-        message = "Login failed: user does not exist.";
+        message = "[失败] 登录失败：用户不存在。";
         return false;
     }
 
     auto& account = it->second;
     if (account.status == AccountStatus::LOCKED) {
-        message = "Login failed: account is locked.";
+        message = "[失败] 登录失败：账户已被锁定。";
         return false;
     }
 
@@ -54,31 +54,31 @@ bool UserManager::login(const std::string& username, const std::string& password
         ++account.failedAttempts;
         if (account.failedAttempts >= 3) {
             account.status = AccountStatus::LOCKED;
-            message = "Login failed: password is wrong. Account is locked after 3 failed attempts.";
+            message = "[失败] 登录失败：密码错误。连续 3 次失败，账户已被锁定。";
             return false;
         }
 
         std::ostringstream output;
-        output << "Login failed: password is wrong. Failed attempts: "
-               << account.failedAttempts << "/3.";
+        output << "[失败] 登录失败：密码错误。已失败 "
+               << account.failedAttempts << "/3 次。";
         message = output.str();
         return false;
     }
 
     account.failedAttempts = 0;
     currentUser_ = username;
-    message = "Login success: current user is '" + username + "'.";
+    message = "[成功] 登录成功：当前用户为 '" + username + "'。";
     return true;
 }
 
 bool UserManager::logout(std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!currentUser_.has_value()) {
-        message = "Logout skipped: no user is logged in.";
+        message = "[提示] 退出失败：当前没有登录的用户。";
         return false;
     }
 
-    message = "Logout success: user '" + *currentUser_ + "' logged out.";
+    message = "[成功] 退出成功：用户 '" + *currentUser_ + "' 已退出登录。";
     currentUser_.reset();
     return true;
 }
@@ -95,7 +95,10 @@ std::string UserManager::currentUser() const {
 
 std::string UserManager::whoami() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return currentUser_.value_or("not logged in");
+    if (currentUser_.has_value()) {
+        return "[提示] 当前用户：" + *currentUser_;
+    }
+    return "[提示] 未登录。";
 }
 
 bool UserManager::userExists(const std::string& username) const {
@@ -140,18 +143,17 @@ void UserManager::importUsers(const std::vector<UserAccount>& users) {
         users_[account.username] = account;
     }
 
-    // 持久化恢复账户数据时不恢复交互会话，避免重启后自动登录。
     currentUser_.reset();
 }
 
 bool UserManager::validateUsername(const std::string& username, std::string& message) const {
     if (username.empty()) {
-        message = "Register failed: username cannot be empty.";
+        message = "[失败] 注册失败：用户名不能为空。";
         return false;
     }
 
     if (username.size() > 32) {
-        message = "Register failed: username length must be 1 to 32 characters.";
+        message = "[失败] 注册失败：用户名长度须为 1-32 个字符。";
         return false;
     }
 
@@ -159,7 +161,7 @@ bool UserManager::validateUsername(const std::string& username, std::string& mes
         return std::isalnum(ch) != 0 || ch == '_' || ch == '-';
     });
     if (!valid) {
-        message = "Register failed: username may only contain letters, digits, underscore, or hyphen.";
+        message = "[失败] 注册失败：用户名只能包含字母、数字、下划线或连字符。";
         return false;
     }
 
@@ -168,12 +170,12 @@ bool UserManager::validateUsername(const std::string& username, std::string& mes
 
 bool UserManager::validatePassword(const std::string& password, std::string& message) const {
     if (password.empty()) {
-        message = "Register failed: password cannot be empty.";
+        message = "[失败] 注册失败：密码不能为空。";
         return false;
     }
 
     if (password.size() > 64) {
-        message = "Register failed: password length must be 1 to 64 characters.";
+        message = "[失败] 注册失败：密码长度须为 1-64 个字符。";
         return false;
     }
 
@@ -188,8 +190,6 @@ std::string UserManager::makeSalt() {
 }
 
 std::string UserManager::hashPassword(const std::string& salt, const std::string& password) const {
-    // 课程设计用途：使用固定 FNV-1a 风格散列避免保存明文密码。
-    // 这不是生产级密码学方案，真实系统应使用 bcrypt/Argon2/PBKDF2 等专用算法。
     constexpr std::uint64_t offsetBasis = 14695981039346656037ull;
     constexpr std::uint64_t prime = 1099511628211ull;
 

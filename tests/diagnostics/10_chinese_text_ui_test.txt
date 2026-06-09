@@ -1,0 +1,18 @@
+reset_system
+register alice 123
+login alice 123
+create_pcb init 100 1 10
+create_pcb worker 80 5 8 1
+list_pcb
+ptree
+show_mem
+readyq
+overview
+touch_file 课程笔记
+write_file 课程笔记 第一行\n第二行\n第三行
+read_file 课程笔记
+ls_file
+save
+status
+help
+exit

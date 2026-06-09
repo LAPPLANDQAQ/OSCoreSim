@@ -1,5 +1,7 @@
 #include "memory/MemoryManager.h"
 
+#include "util/StringUtil.h"
+
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
@@ -8,7 +10,6 @@
 namespace oscore {
 
 MemoryManager::MemoryManager() {
-    // 动态分区用 blocks_ 顺序表示整段物理内存；初始状态只有一个覆盖全内存的 FREE 块。
     blocks_.push_back(MemoryBlock{0, totalMemoryKB_, MemoryBlockType::FREE, 0, "", ""});
 }
 
@@ -26,7 +27,6 @@ bool MemoryManager::allocateManual(
     std::uint32_t sizeKB,
     std::uint32_t& outStart,
     std::string& message) {
-    // 手动内存用于课程实验中的显式 alloc/free，标记为 KERNEL 块但仍记录 owner 和 tag 便于 show_mem 观察。
     return allocateLocked(owner, 0, tag, sizeKB, MemoryBlockType::KERNEL, outStart, message);
 }
 
@@ -37,31 +37,29 @@ bool MemoryManager::allocateForProcess(
     std::uint32_t sizeKB,
     std::uint32_t& outStart,
     std::string& message) {
-    // 进程内存与 PCB PID 绑定，只能由进程生命周期、kill_pcb 或 swap_out 间接释放。
     return allocateLocked(owner, pid, processName, sizeKB, MemoryBlockType::PROCESS, outStart, message);
 }
 
 bool MemoryManager::freeByAddress(const std::string& owner, std::uint32_t addr, std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
-    // 手动释放必须命中块起始地址，且只能释放当前用户拥有的 KERNEL 手动分配块。
     auto it = std::find_if(blocks_.begin(), blocks_.end(), [addr](const MemoryBlock& block) {
         return block.start == addr;
     });
 
     if (it == blocks_.end()) {
-        message = "Free failed: no memory block starts at the given address.";
+        message = "[失败] 释放失败：没有内存块起始于该地址。";
         return false;
     }
     if (it->type == MemoryBlockType::FREE) {
-        message = "Free failed: target block is already free.";
+        message = "[失败] 释放失败：目标内存块已是空闲状态。";
         return false;
     }
     if (it->owner != owner) {
-        message = "Free failed: memory block belongs to another user.";
+        message = "[失败] 释放失败：该内存块属于其他用户。";
         return false;
     }
     if (it->type == MemoryBlockType::PROCESS) {
-        message = "Free failed: process memory must be released by kill_pcb or swap_out.";
+        message = "[失败] 释放失败：进程内存必须通过 kill_pcb 或 swap_out 释放。";
         return false;
     }
 
@@ -70,7 +68,7 @@ bool MemoryManager::freeByAddress(const std::string& owner, std::uint32_t addr, 
     mergeFreeBlocksLocked();
 
     std::ostringstream output;
-    output << "[OK] Freed memory at start=" << addr << "KB, size=" << released << "KB.";
+    output << "[成功] 释放内存：起始地址=" << addr << "KB, 大小=" << released << "KB。";
     message = output.str();
     return true;
 }
@@ -81,18 +79,17 @@ bool MemoryManager::freeByPid(const std::string& owner, std::uint32_t pid, std::
         return block.type == MemoryBlockType::PROCESS && block.owner == owner && block.pid == pid;
     });
     if (it == blocks_.end()) {
-        message = "Free failed: process memory block not found.";
+        message = "[失败] 释放失败：未找到进程内存块。";
         return false;
     }
 
     const auto released = it->size;
     const auto start = it->start;
     *it = MemoryBlock{it->start, it->size, MemoryBlockType::FREE, 0, "", ""};
-    // 释放后立即合并相邻空闲块，降低外部碎片，保持 blocks_ 连续且有序。
     mergeFreeBlocksLocked();
 
     std::ostringstream output;
-    output << "[OK] Released PID=" << pid << " memory at start=" << start << "KB, size=" << released << "KB.";
+    output << "[成功] 释放 PID=" << pid << " 内存：起始地址=" << start << "KB, 大小=" << released << "KB。";
     message = output.str();
     return true;
 }
@@ -103,27 +100,32 @@ bool MemoryManager::swapOutProcess(const std::string& owner, std::uint32_t pid, 
         return block.type == MemoryBlockType::PROCESS && block.owner == owner && block.pid == pid;
     });
     if (it == blocks_.end()) {
-        message = "Swap out failed: process memory block not found or already swapped out.";
+        message = "[失败] 换出失败：未找到进程内存块或已换出。";
         return false;
     }
 
     const auto released = it->size;
     *it = MemoryBlock{it->start, it->size, MemoryBlockType::FREE, 0, "", ""};
-    // swap_out 只释放物理内存块；PCB 的 SWAPPED 状态由 ProcessManager 维护。
     mergeFreeBlocksLocked();
 
     std::ostringstream output;
-    output << "[OK] PID=" << pid << " swapped out. Released " << released << "KB physical memory.";
+    output << "[成功] PID=" << pid << " 已换出。释放物理内存 " << released << "KB。";
     message = output.str();
     return true;
 }
 
+// compact（内存紧缩）：将所有已分配块向低地址端移动，消除空闲块间隙。
+// 算法：
+//   1. 收集所有非 FREE 块到 allocated 向量中（保持原相对顺序）
+//   2. cursor 从 0 开始，逐个重排 allocated 块的 start 到 cursor
+//   3. 记录 PROCESS 块的新地址到 pidNewStart（Kernel 据此回写 PCB::memStart）
+//   4. 如果 cursor 后还有剩余空间，追加一个 FREE 块覆盖剩余部分
+// 例如：[P50][FREE30][P40] → [P50][P40][FREE20]
 CompactionResult MemoryManager::compact() {
     std::lock_guard<std::mutex> lock(mutex_);
     CompactionResult result;
     result.success = true;
 
-    // 紧缩时保持已分配块的相对顺序，只改变 start；进程块的新地址通过 pidNewStart 回写 PCB。
     std::vector<MemoryBlock> allocated;
     allocated.reserve(blocks_.size());
     for (const auto& block : blocks_) {
@@ -134,19 +136,18 @@ CompactionResult MemoryManager::compact() {
 
     std::uint32_t cursor = 0;
     std::ostringstream output;
-    output << "[OK] Memory compacted.";
+    output << "[成功] 内存紧缩完成。";
     for (auto& block : allocated) {
         const auto oldStart = block.start;
         block.start = cursor;
         cursor += block.size;
         if (oldStart != block.start) {
-            output << "\nMoved " << toString(block.type)
-                   << " tag=" << block.tag
+            output << "\n移动 " << toString(block.type)
+                   << " 标签=" << block.tag
                    << " pid=" << block.pid
                    << ": " << oldStart << "KB -> " << block.start << "KB";
         }
         if (block.type == MemoryBlockType::PROCESS) {
-            // Kernel 根据 pidNewStart 回写 PCB::memStart，避免 MemoryManager 直接依赖 PCB 表。
             result.pidNewStart[block.pid] = block.start;
         }
     }
@@ -166,15 +167,31 @@ CompactionResult MemoryManager::compact() {
 std::string MemoryManager::showMemory(const std::string& owner) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream output;
-    // start + sizeKB 描述一个连续地址区间，show_mem 直接展示当前分区表而不改变任何状态。
-    output << "=== Memory Blocks ===\n"
-           << std::left << std::setw(8) << "Start"
-           << std::setw(8) << "End"
-           << std::setw(9) << "SizeKB"
-           << std::setw(10) << "Type"
-           << std::setw(12) << "Owner"
-           << std::setw(7) << "PID"
-           << "Tag\n";
+
+    std::uint32_t usedKB = 0;
+    std::uint32_t freeKB = 0;
+    for (const auto& block : blocks_) {
+        if (block.type == MemoryBlockType::FREE) {
+            freeKB += block.size;
+        } else {
+            usedKB += block.size;
+        }
+    }
+
+    output << "Memory Layout [Total: " << totalMemoryKB_
+           << " KB | Used: " << usedKB
+           << " KB | Free: " << freeKB
+           << " KB | Algo: " << toString(algorithm_)
+           << "]\n\n";
+
+    output << std::left
+           << padRightDisplayWidth("Address", 18)
+           << padRightDisplayWidth("Size", 10)
+           << padRightDisplayWidth("Type", 10)
+           << padRightDisplayWidth("Owner", 12)
+           << padRightDisplayWidth("PID", 6)
+           << "Tag\n"
+           << std::string(62, '-') << '\n';
 
     for (const auto& block : blocks_) {
         const bool free = block.type == MemoryBlockType::FREE;
@@ -182,26 +199,47 @@ std::string MemoryManager::showMemory(const std::string& owner) const {
         const auto visibleOwner = free ? "-" : (owned ? block.owner : "OTHER_USER");
         const auto visiblePid = free ? "-" : std::to_string(block.pid);
         const auto visibleTag = free ? "-" : block.tag;
-        output << std::left << std::setw(8) << block.start
-               << std::setw(8) << (block.start + block.size - 1)
-               << std::setw(9) << block.size
-               << std::setw(10) << toString(block.type)
-               << std::setw(12) << visibleOwner
-               << std::setw(7) << visiblePid
+
+        std::ostringstream addrRange;
+        addrRange << std::setfill('0') << std::setw(4) << block.start
+                  << " - "
+                  << std::setfill('0') << std::setw(4) << (block.start + block.size - 1)
+                  << " KB";
+        std::ostringstream sizeStr;
+        sizeStr << block.size << " KB";
+
+        output << std::left
+               << padRightDisplayWidth(addrRange.str(), 18)
+               << padRightDisplayWidth(sizeStr.str(), 10)
+               << padRightDisplayWidth(free ? "Free" : toString(block.type), 10)
+               << padRightDisplayWidth(visibleOwner, 12)
+               << padRightDisplayWidth(visiblePid, 6)
                << visibleTag << '\n';
     }
 
-    output << "\nMemory Map (0-" << totalMemoryKB_ << "KB):\n";
+    const int mapWidth = 64;
+    output << "\nMemory Map:\n";
+    std::string mapLine;
+    mapLine.reserve(static_cast<std::size_t>(mapWidth) + 2);
     for (const auto& block : blocks_) {
+        const int blockChars = std::max(1,
+            static_cast<int>(static_cast<double>(block.size) / totalMemoryKB_ * mapWidth));
         if (block.type == MemoryBlockType::FREE) {
-            output << "|--FREE:" << block.size << "KB--";
+            mapLine.append(static_cast<std::size_t>(blockChars), '.');
         } else if (block.type == MemoryBlockType::PROCESS) {
-            output << "|##P" << block.pid << ':' << block.size << "KB";
+            mapLine.append(static_cast<std::size_t>(blockChars), 'P');
         } else {
-            output << "|##" << block.tag << ':' << block.size << "KB";
+            mapLine.append(static_cast<std::size_t>(blockChars), 'K');
         }
     }
-    output << '|';
+    if (mapLine.size() > static_cast<std::size_t>(mapWidth)) {
+        mapLine.resize(static_cast<std::size_t>(mapWidth));
+    }
+    while (mapLine.size() < static_cast<std::size_t>(mapWidth)) {
+        mapLine.push_back('.');
+    }
+    output << '[' << mapLine << "]\n"
+           << "Legend: P=Process, K=Manual/Kernel, .=Free";
     return output.str();
 }
 
@@ -226,21 +264,20 @@ std::string MemoryManager::memoryStat() const {
 
     const double fragmentation = free == 0 ? 0.0 : (1.0 - static_cast<double>(largestFree) / free) * 100.0;
     std::ostringstream output;
-    output << "=== Memory Statistics ===\n"
-           << "Total Memory: " << totalMemoryKB_ << " KB\n"
-           << "Used Memory: " << used << " KB\n"
-           << "Free Memory: " << free << " KB\n"
-           << "Allocated Blocks: " << allocatedBlocks << '\n'
-           << "Free Blocks: " << freeBlocks << '\n'
-           << "Largest Free Block: " << largestFree << " KB\n"
-           << "External Fragmentation: " << std::fixed << std::setprecision(2) << fragmentation << "%";
+    output << "=== 内存统计 / Memory Statistics ===\n"
+           << "内存总量: " << totalMemoryKB_ << " KB\n"
+           << "已用内存: " << used << " KB\n"
+           << "空闲内存: " << free << " KB\n"
+           << "已分配块: " << allocatedBlocks << '\n'
+           << "空闲块: " << freeBlocks << '\n'
+           << "最大空闲块: " << largestFree << " KB\n"
+           << "外部碎片率: " << std::fixed << std::setprecision(2) << fragmentation << "%";
     return output.str();
 }
 
 bool MemoryManager::setAlgorithm(const std::string& algoName, std::string& message) {
     const auto normalized = normalizeAlgorithmName(algoName);
     std::lock_guard<std::mutex> lock(mutex_);
-    // 这里只切换后续分配策略，不重排现有内存块，避免 set_alloc_algo 产生隐式副作用。
     if (normalized == "FF" || normalized == "FIRST" || normalized == "FIRST_FIT") {
         algorithm_ = AllocAlgorithm::FIRST_FIT;
     } else if (normalized == "BF" || normalized == "BEST" || normalized == "BEST_FIT") {
@@ -248,11 +285,11 @@ bool MemoryManager::setAlgorithm(const std::string& algoName, std::string& messa
     } else if (normalized == "WF" || normalized == "WORST" || normalized == "WORST_FIT") {
         algorithm_ = AllocAlgorithm::WORST_FIT;
     } else {
-        message = "Set algorithm failed: supported values are FF, BF, WF.";
+        message = "[失败] 切换算法失败：支持的值为 FF, BF, WF。";
         return false;
     }
 
-    message = std::string("[OK] Allocation algorithm changed to ") + toString(algorithm_) + ".";
+    message = std::string("[成功] 分配算法已切换为 ") + toString(algorithm_) + "。";
     return true;
 }
 
@@ -305,41 +342,41 @@ void MemoryManager::setAlgorithmDirect(AllocAlgorithm algorithm) {
 bool MemoryManager::validateBlocks(std::string& message) const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (totalMemoryKB_ == 0) {
-        message = "Memory validation failed: total memory must be greater than 0.";
+        message = "[错误] 内存校验失败：总内存必须大于 0。";
         return false;
     }
     if (blocks_.empty()) {
-        message = "Memory validation failed: block table is empty.";
+        message = "[错误] 内存校验失败：内存块表为空。";
         return false;
     }
 
     std::uint32_t expectedStart = 0;
     for (const auto& block : blocks_) {
         if (block.size == 0) {
-            message = "Memory validation failed: block size cannot be zero.";
+            message = "[错误] 内存校验失败：内存块大小不能为 0。";
             return false;
         }
         if (block.start != expectedStart) {
-            message = "Memory validation failed: blocks are not contiguous or sorted.";
+            message = "[错误] 内存校验失败：内存块不连续或未排序。";
             return false;
         }
         if (block.size > totalMemoryKB_ || block.start > totalMemoryKB_ - block.size) {
-            message = "Memory validation failed: block exceeds total memory range.";
+            message = "[错误] 内存校验失败：内存块超出总内存范围。";
             return false;
         }
         if (block.type == MemoryBlockType::FREE && (block.pid != 0 || !block.owner.empty())) {
-            message = "Memory validation failed: FREE block contains owner or PID.";
+            message = "[错误] 内存校验失败：空闲块包含所有者或 PID。";
             return false;
         }
         expectedStart = block.start + block.size;
     }
 
     if (expectedStart != totalMemoryKB_) {
-        message = "Memory validation failed: blocks do not cover total memory.";
+        message = "[错误] 内存校验失败：内存块未覆盖总内存。";
         return false;
     }
 
-    message = "Memory validation passed.";
+    message = "[提示] 内存校验通过。";
     return true;
 }
 
@@ -350,12 +387,22 @@ std::vector<MemoryBlock> MemoryManager::exportBlocks() const {
 
 void MemoryManager::importBlocks(const std::vector<MemoryBlock>& blocks) {
     std::lock_guard<std::mutex> lock(mutex_);
-    // 快照导入后重新排序并合并 FREE 块，保证后续分配算法看到的是规范化分区表。
     blocks_ = blocks;
     sortBlocksLocked();
     mergeFreeBlocksLocked();
 }
 
+// ============================================================================
+// 动态分区分配核心算法
+// ============================================================================
+// allocateLocked 是三种分配接口（手动、进程、换出恢复）的共同底层实现。
+// 算法流程：
+//   1. 基础校验：owner 非空（已登录）、sizeKB > 0
+//   2. 调用 findFreeBlockLocked 根据当前算法（FF/BF/WF）查找合适的空闲块
+//   3. 如果空闲块大小正好等于请求大小 → 直接标记为已分配
+//   4. 如果空闲块更大 → 拆分为"已分配块 + 剩余空闲块"，插入到 blocks_ 中
+//   5. 最后排序 blocks_ 以保持起始地址升序
+// 注意：分配成功后不会自动合并 FREE 块（仅释放时合并），紧凑（compact）可消除碎片。
 bool MemoryManager::allocateLocked(
     const std::string& owner,
     std::uint32_t pid,
@@ -365,19 +412,18 @@ bool MemoryManager::allocateLocked(
     std::uint32_t& outStart,
     std::string& message) {
     if (owner.empty()) {
-        message = "Allocation failed: user must login first.";
+        message = "[失败] 分配失败：请先登录。";
         return false;
     }
     if (sizeKB == 0) {
-        message = "Allocation failed: sizeKB must be greater than 0.";
+        message = "[失败] 分配失败：内存大小必须大于 0 KB。";
         return false;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    // 根据当前算法选择空闲块：FF 立即返回，BF/WF 继续扫描寻找最优候选。
     auto it = findFreeBlockLocked(sizeKB);
     if (it == blocks_.end()) {
-        message = "Allocation failed: no suitable free block.";
+        message = "[失败] 分配失败：没有合适的空闲内存块。";
         return false;
     }
 
@@ -387,7 +433,6 @@ bool MemoryManager::allocateLocked(
     if (freeSize == sizeKB) {
         *it = allocated;
     } else {
-        // 大空闲块被拆成“已分配块 + 剩余空闲块”，这是连续分区分配的核心动作。
         it->start = freeStart + sizeKB;
         it->size = freeSize - sizeKB;
         blocks_.insert(it, allocated);
@@ -396,11 +441,30 @@ bool MemoryManager::allocateLocked(
 
     outStart = freeStart;
     std::ostringstream output;
-    output << "[OK] Allocated " << sizeKB << "KB at start=" << outStart << "KB using " << toString(algorithm_) << ".";
+    output << "[成功] 分配 " << sizeKB << "KB 内存，起始地址=" << outStart << "KB，算法=" << toString(algorithm_) << "。";
     message = output.str();
     return true;
 }
 
+// ============================================================================
+// FF/BF/WF 空闲块选择算法
+// ============================================================================
+// 根据当前算法（algorithm_）从 blocks_ 中选择合适的空闲块：
+//
+// FF（首次适应 First Fit）：
+//   遍历 blocks_，返回第一个 type==FREE 且 size >= sizeKB 的块。
+//   时间复杂度 O(n)，实际平均最快（空闲块通常在前面或中间）。
+//   缺点：可能将大块切碎，产生外部碎片。
+//
+// BF（最佳适应 Best Fit）：
+//   遍历全部 blocks_，选择 size >= sizeKB 的最小空闲块。
+//   时间复杂度 O(n)，每次都遍历全部。
+//   优点：减少内部浪费；缺点：留下越来越小的碎片，外部碎片可能增加。
+//
+// WF（最差适应 Worst Fit）：
+//   遍历全部 blocks_，选择 size >= sizeKB 的最大空闲块。
+//   时间复杂度 O(n)，每次都遍历全部。
+//   优点：切大块后可能保留较大剩余空间；缺点：大块被快速消耗。
 std::vector<MemoryBlock>::iterator MemoryManager::findFreeBlockLocked(std::uint32_t sizeKB) {
     std::vector<MemoryBlock>::iterator best = blocks_.end();
     for (auto it = blocks_.begin(); it != blocks_.end(); ++it) {
@@ -409,7 +473,6 @@ std::vector<MemoryBlock>::iterator MemoryManager::findFreeBlockLocked(std::uint3
         }
 
         if (algorithm_ == AllocAlgorithm::FIRST_FIT) {
-            // First Fit：选择地址顺序上第一个可容纳请求的空闲块。
             return it;
         }
         if (best == blocks_.end()) {
@@ -417,10 +480,8 @@ std::vector<MemoryBlock>::iterator MemoryManager::findFreeBlockLocked(std::uint3
             continue;
         }
         if (algorithm_ == AllocAlgorithm::BEST_FIT && it->size < best->size) {
-            // Best Fit：保留当前最小可用块，尽量减少本次分配后的剩余空间。
             best = it;
         } else if (algorithm_ == AllocAlgorithm::WORST_FIT && it->size > best->size) {
-            // Worst Fit：选择最大空闲块，试图把大块切开后仍保留较大的剩余空间。
             best = it;
         }
     }
@@ -433,6 +494,10 @@ void MemoryManager::sortBlocksLocked() {
     });
 }
 
+// 合并相邻的空闲块：遍历 blocks_，将地址连续的 FREE 块合并为一个。
+// 在每次释放内存后调用，降低外部碎片。
+// 注意：只能合并物理地址连续的 FREE 块（start + size == next.start），
+//       不会跨越已分配块进行合并。
 void MemoryManager::mergeFreeBlocksLocked() {
     sortBlocksLocked();
     std::vector<MemoryBlock> merged;
@@ -441,7 +506,6 @@ void MemoryManager::mergeFreeBlocksLocked() {
             merged.back().type == MemoryBlockType::FREE &&
             block.type == MemoryBlockType::FREE &&
             merged.back().start + merged.back().size == block.start) {
-            // 只有物理地址连续的 FREE 块才能合并，已分配块之间不能跨越合并。
             merged.back().size += block.size;
         } else {
             merged.push_back(block);

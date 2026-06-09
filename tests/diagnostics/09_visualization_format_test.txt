@@ -1,0 +1,13 @@
+reset_system
+register alice 123
+login alice 123
+create_pcb init 100 1 10
+create_pcb worker 80 5 8 1
+create_pcb logger 60 6 8 1
+create_pcb shell 50 2 6
+list_pcb
+ptree
+show_mem
+readyq
+overview
+exit

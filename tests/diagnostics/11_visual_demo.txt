@@ -1,0 +1,23 @@
+reset_system
+register demo 123
+login demo 123
+create_pcb init 100 1 10
+create_pcb worker 80 5 8 1
+create_pcb logger 60 6 8 1
+create_pcb shell 50 2 6
+alloc 课程实验 40
+list_pcb
+ptree
+show_pcb 1
+show_mem
+mem_stat
+readyq
+step
+overview
+touch_file 课程笔记
+touch_file 实验报告.txt
+write_file 课程笔记 第一行\n第二行\n第三行
+ls_file
+read_file 课程笔记
+status
+exit

@@ -9,10 +9,12 @@
 
 namespace oscore {
 
+// 便捷入口：使用标准输入输出运行程序。
 int ConsoleApp::run(InstanceRole role) {
     return run(std::cin, std::cout, role);
 }
 
+// 根据角色分发：MASTER 走 masterLoop（持有内核 + Pipe Server），CLIENT 走 clientLoop（管道转发）。
 int ConsoleApp::run(std::istream& input, std::ostream& output, InstanceRole role) {
     if (role == InstanceRole::MASTER) {
         masterLoop(input, output);
@@ -22,6 +24,8 @@ int ConsoleApp::run(std::istream& input, std::ostream& output, InstanceRole role
     return 0;
 }
 
+// masterLoop：Master 实例主循环。
+// 流程：1.启动 Kernel → 2.启动NamedPipeServer → 3.打印Banner → 4.交互终端显示菜单 → 5.原始命令输入循环 → 6.关闭PipeServer+Kernel
 void ConsoleApp::masterLoop(std::istream& input, std::ostream& output) {
     // ===== MASTER 启动流程 =====
 
@@ -43,7 +47,6 @@ void ConsoleApp::masterLoop(std::istream& input, std::ostream& output) {
     // 3. 打印 MASTER 启动 Banner
     output << "========================================\n";
     output << " 可持久化操作系统核心模拟器\n";
-    output << " Windows / C++20 / 操作系统课程设计\n";
     output << " 当前角色：MASTER\n";
     output << " 输入 help 可查看原始命令列表。\n";
     output << "========================================\n";
@@ -97,6 +100,8 @@ void ConsoleApp::masterLoop(std::istream& input, std::ostream& output) {
     kernel_.stop();
 }
 
+// clientLoop：Client 实例主循环。
+// Client 不创建 Kernel，不读写状态文件。命令通过 NamedPipeClient 转发给 Master，exit 只关闭自身窗口。
 void ConsoleApp::clientLoop(std::istream& input, std::ostream& output) {
     // ===== CLIENT 启动流程 =====
 
@@ -105,7 +110,6 @@ void ConsoleApp::clientLoop(std::istream& input, std::ostream& output) {
     // 打印 CLIENT 启动 Banner
     output << "========================================\n";
     output << " 可持久化操作系统核心模拟器\n";
-    output << " Windows / C++20 / 操作系统课程设计\n";
     output << " 当前角色：CLIENT\n";
     output << " 已通过 Named Pipe 连接到 MASTER 内核。\n";
     output << " 输入 exit 可关闭当前客户端窗口。\n";
@@ -161,6 +165,7 @@ void ConsoleApp::clientLoop(std::istream& input, std::ostream& output) {
     }
 }
 
+// 判断是否为本地的 exit/quit 命令。Client 下这些命令只关闭自身，不发送给 Master。
 bool ConsoleApp::isLocalExitCommand(const std::string& line) {
     // 简单判断：去掉前导空格后检查是否为 exit 或 quit
     const auto start = line.find_first_not_of(" \t\r\n");
@@ -186,6 +191,7 @@ bool ConsoleApp::isLocalExitCommand(const std::string& line) {
     return cmd == "exit" || cmd == "quit";
 }
 
+// 判断输入源是否为真实交互终端。Windows 下使用 _isatty 检测，脚本重定向时返回 false 从而跳过菜单。
 bool ConsoleApp::isInteractiveInput(std::istream& input) {
     // 只有真实 std::cin 且连接到终端时才显示菜单；文件/管道输入保持脚本兼容。
     if (&input != &std::cin) {

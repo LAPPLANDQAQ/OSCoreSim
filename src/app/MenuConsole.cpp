@@ -17,6 +17,7 @@ std::string trim(const std::string& value) {
     return value.substr(begin, end - begin + 1);
 }
 
+// ASCII 字符串转小写，用于命令名不区分大小写比较。
 std::string toLowerAscii(std::string value) {
     for (auto& ch : value) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -24,6 +25,8 @@ std::string toLowerAscii(std::string value) {
     return value;
 }
 
+// 对 register/login 命令的密码参数做掩码处理，避免密码明文显示在终端。
+// 例如 "register alice 123456" → "register alice ******"
 std::string maskedCommandForDisplay(const std::string& command) {
     std::istringstream input(command);
     std::string name;
@@ -37,6 +40,7 @@ std::string maskedCommandForDisplay(const std::string& command) {
     return command;
 }
 
+// 验证内存区标签格式：1-32 字符，仅允许字母/数字/下划线/连字符/点号。
 bool isValidMemoryTag(const std::string& value) {
     const auto trimmed = trim(value);
     return !trimmed.empty() &&
@@ -46,6 +50,7 @@ bool isValidMemoryTag(const std::string& value) {
            });
 }
 
+// 检查字符串是否只包含数字字符（正整数格式校验）。
 bool isPositiveIntegerText(const std::string& input) {
     const auto value = trim(input);
     return !value.empty() &&
@@ -54,6 +59,7 @@ bool isPositiveIntegerText(const std::string& input) {
            });
 }
 
+// 检查字符串是否只包含 '0' 字符（用于输入校验，拒绝将 0 作为有效输入）。
 bool isZeroIntegerText(const std::string& input) {
     const auto value = trim(input);
     return !value.empty() &&
@@ -62,6 +68,7 @@ bool isZeroIntegerText(const std::string& input) {
            });
 }
 
+// 检查字符串是否为负数格式（以 '-' 开头且后续全为数字）。
 bool isNegativeIntegerText(const std::string& input) {
     const auto value = trim(input);
     return value.size() > 1 &&
@@ -73,9 +80,14 @@ bool isNegativeIntegerText(const std::string& input) {
 
 } // namespace
 
+// 构造函数：记录实例角色（MASTER/CLIENT）和命令执行回调。
 MenuConsole::MenuConsole(InstanceRole role, CommandExecutor executor)
     : role_(role), executor_(std::move(executor)) {}
 
+// run()：中文数字菜单主循环。
+// 交互终端启动后默认进入此菜单，用户选择编号 → 调用对应子菜单 → 子菜单内部拼接原始命令 → 通过 executor_ 执行。
+// 返回 MenuOutcome::EnterRawMode 表示用户选择"进入原始命令模式"，
+// 返回 MenuOutcome::ExitProgram 表示用户选择"退出程序"。
 MenuOutcome MenuConsole::run(std::istream& input, std::ostream& output) {
     eof_ = false;
 
@@ -132,6 +144,7 @@ MenuOutcome MenuConsole::run(std::istream& input, std::ostream& output) {
     return MenuOutcome::ExitProgram;
 }
 
+// 用户管理子菜单：注册/登录/登出/查看当前用户。
 bool MenuConsole::handleUserMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 用户管理 ==========\n"
@@ -168,21 +181,22 @@ bool MenuConsole::handleUserMenu(std::istream& input, std::ostream& output) {
     return true;
 }
 
+// 进程管理子菜单：创建/查看/阻塞/唤醒/挂起/恢复/修改优先级/删除/就绪队列。
 bool MenuConsole::handleProcessMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 进程管理 ==========\n"
-               << "1. 创建进程\n"
-               << "2. 查看进程列表\n"
-               << "3. 查看进程详情\n"
-               << "4. 查看进程树\n"
-               << "5. 阻塞进程\n"
-               << "6. 唤醒进程\n"
-               << "7. 挂起进程\n"
-               << "8. 恢复进程\n"
-               << "9. 修改进程优先级\n"
+               << "1.  创建进程\n"
+               << "2.  查看进程列表\n"
+               << "3.  查看进程详情\n"
+               << "4.  查看进程树\n"
+               << "5.  阻塞进程\n"
+               << "6.  唤醒进程\n"
+               << "7.  挂起进程\n"
+               << "8.  恢复进程\n"
+               << "9.  修改进程优先级\n"
                << "10. 删除进程\n"
                << "11. 查看就绪队列\n"
-               << "0. 返回主菜单\n";
+               << "0.  返回主菜单\n";
 
         std::string choice;
         if (!readChoice(input, output, choice)) return true;
@@ -237,6 +251,7 @@ bool MenuConsole::handleProcessMenu(std::istream& input, std::ostream& output) {
     return true;
 }
 
+// 内存管理子菜单：手动分配/释放/查看分区/查看统计/紧缩/切换算法/缺页/换出。
 bool MenuConsole::handleMemoryMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 内存管理 ==========\n"
@@ -289,14 +304,15 @@ bool MenuConsole::handleMemoryMenu(std::istream& input, std::ostream& output) {
     return true;
 }
 
+// 连续手动分配内存：循环收集"内存区名称 + 大小 KB"，拼接为 alloc 命令执行。
+// 每次分配后自动追加 show_mem 和 list_pcb 输出，便于课堂演示观察变化。
+// 输入 0 退出循环，输入 1 继续分配。
 bool MenuConsole::handleContinuousManualMemoryAllocation(std::istream& input, std::ostream& output) {
     // 与连续创建进程保持同一种菜单风格：输入一组完整字段，执行一次命令，展示状态，再询问是否继续。
     // 菜单层只拼接 alloc 命令，不直接访问 MemoryManager；Master/Client 仍由 executor_ 保持原有路由。
-    output << "\n========== 连续分配内存 ==========\n"
+    output << "\n========== 分配内存 ==========\n"
            << "输入内存区信息后将创建一个手动内存区，每次分配后自动显示内存分区和进程表。\n"
-           << "内存区名称会显示在 show_mem 的 Tag 列中。\n"
-           << "手动内存区不会创建 PCB，进程表仅用于对照观察。\n"
-           << "内存区名称输入 0 可退出连续分配流程。\n";
+           << "手动内存区不会创建 PCB，进程表仅用于对照观察。\n";
 
     while (!eof_) {
         std::string rawName;
@@ -360,6 +376,8 @@ bool MenuConsole::handleContinuousManualMemoryAllocation(std::istream& input, st
     return true;
 }
 
+// 执行内存分配命令后自动展示 show_mem 和 list_pcb，便于课堂观察。
+// 原始命令模式和脚本重定向模式不会调用此辅助函数。
 bool MenuConsole::executeMemoryAllocationAndShowState(std::ostream& output, const std::string& command) {
     // 自动 show_mem/list_pcb 只是中文菜单的观察便利；原始命令模式和脚本模式不会调用这个辅助函数。
     output << "\n正在执行命令：\n" << maskedCommandForDisplay(command) << '\n';
@@ -393,6 +411,7 @@ bool MenuConsole::executeMemoryAllocationAndShowState(std::ostream& output, cons
            processResult.shouldExit || processResult.fatalError;
 }
 
+// 调度管理子菜单：单步调度/启动自动调度/停止自动调度/重启调度器。
 bool MenuConsole::handleSchedulerMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 调度管理 ==========\n"
@@ -424,6 +443,7 @@ bool MenuConsole::handleSchedulerMenu(std::istream& input, std::ostream& output)
     return true;
 }
 
+// 持久化管理子菜单：保存系统状态（save）/加载系统状态（load）。
 bool MenuConsole::handlePersistenceMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 持久化管理 ==========\n"
@@ -449,6 +469,7 @@ bool MenuConsole::handlePersistenceMenu(std::istream& input, std::ostream& outpu
     return true;
 }
 
+// 系统总览子菜单：查看 overview / 查看 status。
 bool MenuConsole::handleOverviewMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 系统总览 ==========\n"
@@ -474,6 +495,8 @@ bool MenuConsole::handleOverviewMenu(std::istream& input, std::ostream& output) 
     return true;
 }
 
+// 虚拟文件系统子菜单：创建/写入/读取/列出/删除虚拟文件。
+// 写文件操作支持多行输入，以单独一行 . 结束。
 bool MenuConsole::handleVfsMenu(std::istream& input, std::ostream& output) {
     while (!eof_) {
         output << "\n========== 虚拟文件系统 ==========\n"
@@ -499,9 +522,45 @@ bool MenuConsole::handleVfsMenu(std::istream& input, std::ostream& output) {
             const auto name = askRequired(input, output, "请输入文件名：");
             if (eof_) return true;
             if (name.empty()) continue;
-            const auto content = askRequired(input, output, "请输入文件内容：", true);
-            if (eof_) return true;
-            if (!content.empty() && execute(output, "write_file " + name + " " + content)) return true;
+            // 多行输入：逐行读取，以单独一行 . 结束
+            output << "请输入文件内容，多行输入时以单独一行 . 结束：\n";
+            std::ostringstream multiLine;
+            std::string line;
+            bool firstLine = true;
+            while (true) {
+                if (!std::getline(input, line)) {
+                    output << '\n';
+                    eof_ = true;
+                    return true;
+                }
+                if (line == ".") {
+                    break;
+                }
+                if (!firstLine) {
+                    multiLine << '\n';
+                }
+                multiLine << line;
+                firstLine = false;
+            }
+            const auto rawContent = multiLine.str();
+            if (rawContent.empty()) {
+                output << "内容为空，操作已取消，返回上一级菜单。\n";
+                continue;
+            }
+            // 将真实换行符等转义后拼接为 write_file 命令
+            std::string escapedContent;
+            escapedContent.reserve(rawContent.size() * 2);
+            for (const char ch : rawContent) {
+                switch (ch) {
+                case '\n': escapedContent += "\\n"; break;
+                case '\r': escapedContent += "\\r"; break;
+                case '\t': escapedContent += "\\t"; break;
+                case '\\': escapedContent += "\\\\"; break;
+                case '"':  escapedContent += "\\\""; break;
+                default:   escapedContent.push_back(ch); break;
+                }
+            }
+            execute(output, "write_file " + name + " " + escapedContent);
         } else if (choice == "3") {
             const auto name = askRequired(input, output, "请输入文件名：");
             if (eof_) return true;
@@ -519,6 +578,7 @@ bool MenuConsole::handleVfsMenu(std::istream& input, std::ostream& output) {
     return true;
 }
 
+// 执行原始命令并打印结果。executor_ 由 ConsoleApp 注入，Master 走 Kernel，Client 走 NamedPipe。
 bool MenuConsole::execute(std::ostream& output, const std::string& command) const {
     // executor_ 由 ConsoleApp 注入：Master 走 Kernel::submitCommand，Client 走 NamedPipeClient，菜单层不区分底层通道。
     output << "\n正在执行命令：" << maskedCommandForDisplay(command) << '\n';
@@ -534,6 +594,7 @@ bool MenuConsole::execute(std::ostream& output, const std::string& command) cons
     return result.shouldExit || result.fatalError;
 }
 
+// 带提示的逐行读取。遇到 EOF 时设置 eof_ 标志。
 bool MenuConsole::readLine(
     std::istream& input,
     std::ostream& output,
@@ -548,6 +609,7 @@ bool MenuConsole::readLine(
     return true;
 }
 
+// 读取菜单选项编号（trim 后返回）。
 bool MenuConsole::readChoice(std::istream& input, std::ostream& output, std::string& choice) {
     if (!readLine(input, output, "请输入选项编号：", choice)) {
         return false;
@@ -559,6 +621,7 @@ bool MenuConsole::readChoice(std::istream& input, std::ostream& output, std::str
     return true;
 }
 
+// 退出确认：输入 y/yes 确认退出，其他输入取消。
 bool MenuConsole::confirmExit(std::istream& input, std::ostream& output) {
     std::string answer;
     if (!readLine(input, output, "是否确认退出？输入 y 确认：", answer)) {
@@ -568,6 +631,7 @@ bool MenuConsole::confirmExit(std::istream& input, std::ostream& output) {
     return normalized == "y" || normalized == "yes";
 }
 
+// 必填输入：空输入时取消操作并返回上一级菜单。
 std::string MenuConsole::askRequired(
     std::istream& input,
     std::ostream& output,
@@ -586,8 +650,10 @@ std::string MenuConsole::askRequired(
     return preserveSpaces ? value : trimmed;
 }
 
+// 连续创建进程：循环收集"名称+内存+优先级+总时间+父PID"，拼接为 create_pcb 命令执行。
+// 每次创建后自动追加 list_pcb 显示进程表。输入 0 退出循环。
 bool MenuConsole::handleContinuousCreateProcess(std::istream& input, std::ostream& output) {
-    output << "\n========== 连续创建进程 ==========\n"
+    output << "\n========== 创建进程 ==========\n"
            << "输入进程信息后将创建一个进程，每次创建后自动显示进程表。\n"
            << "进程名输入 0 可退出连续创建流程。\n";
 
@@ -639,6 +705,7 @@ bool MenuConsole::handleContinuousCreateProcess(std::istream& input, std::ostrea
     return true;
 }
 
+// 执行进程命令后自动追加 list_pcb 显示当前进程表，便于课堂演示观察进程状态变化。
 bool MenuConsole::executeProcessCommandAndShowTable(std::ostream& output, const std::string& command) {
     // 1. 执行原始进程命令
     const bool shouldExit = execute(output, command);
@@ -655,6 +722,7 @@ bool MenuConsole::executeProcessCommandAndShowTable(std::ostream& output, const 
     return shouldExit || tableResult.fatalError;
 }
 
+// 可选输入：允许空输入（直接回车跳过），不取消操作。
 std::string MenuConsole::askOptional(
     std::istream& input,
     std::ostream& output,

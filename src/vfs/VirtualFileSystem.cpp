@@ -1,5 +1,7 @@
 #include "vfs/VirtualFileSystem.h"
 
+#include "util/StringUtil.h"
+
 #include <algorithm>
 #include <ctime>
 #include <iomanip>
@@ -7,12 +9,14 @@
 
 namespace oscore {
 
-// 虚拟文件系统只保存在内存中的 VirtualFile 表；owner 是隔离边界，不同用户可拥有同名文件。
+// createFile：创建空虚拟文件。
+// 校验：用户已登录 → 文件名合法（isValidFileName） → 同一用户下无重名文件。
+// 为新文件分配全局唯一 fileId，记录创建/修改时间戳（Unix timestamp）。
 bool VirtualFileSystem::createFile(const std::string& owner,
                                    const std::string& name,
                                    std::string& message) {
     if (owner.empty()) {
-        message = "VFS create failed: user must login first.";
+        message = "[失败] 创建失败：请先登录。";
         return false;
     }
 
@@ -22,9 +26,8 @@ bool VirtualFileSystem::createFile(const std::string& owner,
         return false;
     }
 
-    // 检查同一用户下是否有同名文件
     if (findFileIndex(owner, name) >= 0) {
-        message = "VFS create failed: file '" + name + "' already exists.";
+        message = "[失败] 创建失败：文件 '" + name + "' 已存在。";
         return false;
     }
 
@@ -39,19 +42,22 @@ bool VirtualFileSystem::createFile(const std::string& owner,
     files_.push_back(std::move(file));
 
     std::ostringstream output;
-    output << "[OK] Virtual file created.\n"
-           << "Name: " << name << '\n'
-           << "Owner: " << owner;
+    output << "[成功] 虚拟文件已创建。\n"
+           << "名称: " << name << '\n'
+           << "所有者: " << owner;
     message = output.str();
     return true;
 }
 
+// writeFile：写入虚拟文件内容。
+// 写时创建语义：如果文件已存在则覆盖内容并更新修改时间，如果不存在则自动创建文件后再写入。
+// 这避免了课程演示中必须先 touch_file 再 write_file 的繁琐流程。
 bool VirtualFileSystem::writeFile(const std::string& owner,
                                   const std::string& name,
                                   const std::string& content,
                                   std::string& message) {
     if (owner.empty()) {
-        message = "VFS write failed: user must login first.";
+        message = "[失败] 写入失败：请先登录。";
         return false;
     }
 
@@ -61,23 +67,19 @@ bool VirtualFileSystem::writeFile(const std::string& owner,
         return false;
     }
 
-    // 查找已有文件
     const auto index = findFileIndex(owner, name);
     if (index >= 0) {
-        // 更新已有文件
         files_[index].content = content;
         files_[index].modifiedAt = static_cast<std::uint64_t>(std::time(nullptr));
 
         std::ostringstream output;
-        output << "[OK] Virtual file written.\n"
-               << "Name: " << name << '\n'
-               << "Size: " << content.size() << " bytes";
+        output << "[成功] 虚拟文件已写入。\n"
+               << "名称: " << name << '\n'
+               << "大小: " << content.size() << " 字节";
         message = output.str();
         return true;
     }
 
-    // 文件不存在 → 自动创建（方便课程演示）
-    // write_file 采用“有则覆盖、无则创建”，让脚本演示不必先 touch_file。
     const auto now = static_cast<std::uint64_t>(std::time(nullptr));
     VirtualFile file;
     file.fileId = nextFileId_++;
@@ -89,9 +91,9 @@ bool VirtualFileSystem::writeFile(const std::string& owner,
     files_.push_back(std::move(file));
 
     std::ostringstream output;
-    output << "[OK] Virtual file auto-created and written.\n"
-           << "Name: " << name << '\n'
-           << "Size: " << content.size() << " bytes";
+    output << "[成功] 虚拟文件已自动创建并写入。\n"
+           << "名称: " << name << '\n'
+           << "大小: " << content.size() << " 字节";
     message = output.str();
     return true;
 }
@@ -99,23 +101,30 @@ bool VirtualFileSystem::writeFile(const std::string& owner,
 std::string VirtualFileSystem::readFile(const std::string& owner,
                                         const std::string& name) const {
     if (owner.empty()) {
-        return "VFS read failed: user must login first.";
+        return "[失败] 读取失败：请先登录。";
     }
 
-    // 通过 owner + name 查找，保证用户只能读取自己的虚拟文件。
     const auto index = findFileIndex(owner, name);
     if (index < 0) {
-        return "VFS read failed: file '" + name + "' does not exist.";
+        return "[失败] 读取失败：文件 '" + name + "' 不存在。";
     }
 
     const auto& file = files_[index];
     std::ostringstream output;
-    output << "=== Virtual File ===\n"
-           << "Name: " << file.name << '\n'
-           << "Owner: " << file.owner << '\n'
-           << "Size: " << file.content.size() << " bytes\n"
-           << "Content:\n"
-           << file.content;
+    output << "=== 文件: " << file.name << " ===\n"
+           << "所有者: " << file.owner << '\n'
+           << "大小: " << file.content.size() << " 字节\n"
+           << "内容:\n"
+           << "--------------------------------\n";
+    if (file.content.empty()) {
+        output << "(空)\n";
+    } else {
+        output << file.content;
+        if (!file.content.empty() && file.content.back() != '\n') {
+            output << '\n';
+        }
+    }
+    output << "--------------------------------";
     return output.str();
 }
 
@@ -123,29 +132,26 @@ bool VirtualFileSystem::deleteFile(const std::string& owner,
                                    const std::string& name,
                                    std::string& message) {
     if (owner.empty()) {
-        message = "VFS delete failed: user must login first.";
+        message = "[失败] 删除失败：请先登录。";
         return false;
     }
 
-    // 删除同样按 owner 隔离，避免不同用户同名文件互相影响。
     const auto index = findFileIndex(owner, name);
     if (index < 0) {
-        message = "VFS delete failed: file '" + name + "' does not exist.";
+        message = "[失败] 删除失败：文件 '" + name + "' 不存在。";
         return false;
     }
 
     files_.erase(files_.begin() + index);
-    message = "[OK] Virtual file removed: " + name;
+    message = "[成功] 虚拟文件已删除: " + name;
     return true;
 }
 
 std::string VirtualFileSystem::listFiles(const std::string& owner) const {
     if (owner.empty()) {
-        return "VFS list failed: user must login first.";
+        return "[失败] 列表失败：请先登录。";
     }
 
-    // 收集当前用户的文件，按 fileId 排序
-    // list/read/delete 都只展示当前 owner 的文件，避免跨用户读取虚拟文件内容。
     std::vector<VirtualFile> userFiles;
     for (const auto& file : files_) {
         if (file.owner == owner) {
@@ -157,23 +163,23 @@ std::string VirtualFileSystem::listFiles(const std::string& owner) const {
     });
 
     if (userFiles.empty()) {
-        return "=== Virtual Files for user: " + owner + " ===\n"
-               "No virtual files found.";
+        return "=== 虚拟文件 [用户: " + owner + "] ===\n"
+               "暂无虚拟文件。";
     }
 
     std::ostringstream output;
-    output << "=== Virtual Files for user: " << owner << " ===\n"
+    output << "=== 虚拟文件 [用户: " << owner << "] ===\n"
            << std::left
-           << std::setw(6) << "ID"
-           << std::setw(14) << "Name"
-           << std::setw(8) << "Size"
+           << padRightDisplayWidth("ID", 6)
+           << padRightDisplayWidth("Name", 14)
+           << padRightDisplayWidth("Size", 8)
            << "Modified\n";
 
     for (const auto& file : userFiles) {
         output << std::left
-               << std::setw(6) << file.fileId
-               << std::setw(14) << file.name
-               << std::setw(8) << file.content.size()
+               << padRightDisplayWidth(std::to_string(file.fileId), 6)
+               << padRightDisplayWidth(file.name, 14)
+               << padRightDisplayWidth(std::to_string(file.content.size()), 8)
                << file.modifiedAt << '\n';
     }
 
@@ -190,8 +196,6 @@ std::size_t VirtualFileSystem::fileCountForUser(const std::string& owner) const 
 }
 
 std::vector<VirtualFile> VirtualFileSystem::exportFiles() const {
-    // 按 fileId 排序后返回副本
-    // 快照持久化通过 export/import 复制纯数据，不暴露内部 files_ 容器给 SnapshotStore 修改。
     auto result = files_;
     std::sort(result.begin(), result.end(), [](const VirtualFile& a, const VirtualFile& b) {
         return a.fileId < b.fileId;
@@ -200,7 +204,6 @@ std::vector<VirtualFile> VirtualFileSystem::exportFiles() const {
 }
 
 void VirtualFileSystem::importFiles(const std::vector<VirtualFile>& files) {
-    // load 快照时整体替换 VFS 表；nextFileId 由独立字段恢复，避免新文件 ID 回退。
     files_ = files;
 }
 
@@ -214,7 +217,6 @@ void VirtualFileSystem::importNextFileId(std::uint32_t nextFileId) {
 
 int VirtualFileSystem::findFileIndex(const std::string& owner,
                                      const std::string& name) const {
-    // owner + name 是逻辑唯一键，支持不同用户创建同名文件。
     for (std::size_t i = 0; i < files_.size(); ++i) {
         if (files_[i].owner == owner && files_[i].name == name) {
             return static_cast<int>(i);
@@ -225,20 +227,27 @@ int VirtualFileSystem::findFileIndex(const std::string& owner,
 
 bool VirtualFileSystem::isValidFileName(const std::string& name, std::string& message) {
     if (name.empty()) {
-        message = "VFS failed: file name cannot be empty.";
+        message = "[失败] 文件名不能为空。";
         return false;
     }
-    if (name.size() > 64) {
-        message = "VFS failed: file name must be 1 to 64 characters.";
+    if (name.size() > 128) {
+        message = "[失败] 文件名长度必须为 1-128 字节 (UTF-8)。";
         return false;
     }
-    // 允许字母、数字、下划线、横线、点号
-    const auto valid = std::all_of(name.begin(), name.end(), [](unsigned char ch) {
-        return std::isalnum(ch) != 0 || ch == '_' || ch == '-' || ch == '.';
-    });
-    if (!valid) {
-        message = "VFS failed: file name may only contain letters, digits, underscore, hyphen, or dot.";
-        return false;
+    for (const auto ch : name) {
+        const auto uc = static_cast<unsigned char>(ch);
+        if (uc <= 0x1F || uc == 0x7F) {
+            message = "[失败] 文件名包含控制字符。";
+            return false;
+        }
+        switch (uc) {
+        case '/': case '\\': case ':': case '*': case '?':
+        case '"': case '<': case '>': case '|':
+            message = "[失败] 文件名包含禁止字符: '"
+                      + std::string(1, ch) + "'。";
+            return false;
+        default: break;
+        }
     }
     return true;
 }

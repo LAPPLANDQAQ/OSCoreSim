@@ -197,6 +197,12 @@ UserAccount readUser(BinaryReader& reader) {
     return account;
 }
 
+// 序列化 PCB 到二进制流。
+// 字段顺序（必须与 readPcb 完全一致）：
+//   pid(4B) → ppid(4B) → name(str) → owner(str) → state(4B) → priority(4B) → queueLevel(4B)
+//   → totalTime(4B) → executedTime(4B) → remainingTime(4B) → timeSliceLeft(4B)
+//   → memStart(4B) → memSize(4B) → swappedOut(bool) → childCount(4B) + 逐个 child(4B)
+// 枚举值转换为 int32_t 存储，加载时需进行范围校验。
 void writePcb(BinaryWriter& writer, const PCB& pcb) {
     writer.writeUint32(pcb.pid);
     writer.writeUint32(pcb.ppid);
@@ -218,6 +224,10 @@ void writePcb(BinaryWriter& writer, const PCB& pcb) {
     }
 }
 
+// 从二进制流反序列化 PCB。字段顺序必须与 writePcb 完全一致。
+// 关键校验：
+//   - ProcessState 值必须在 [NEW, SWAPPED] 范围内，防止损坏文件注入非法状态
+//   - children 数量受 kMaxVectorCount 限制，防止恶意文件分配超大内存
 PCB readPcb(BinaryReader& reader) {
     PCB pcb;
     pcb.pid = reader.readUint32();
@@ -307,6 +317,24 @@ SnapshotSummary SnapshotStore::summarize(const KernelSnapshot& snapshot) const {
     return summary;
 }
 
+// save()：保存系统状态到二进制快照文件。
+//
+// 原子写入策略（防止写入中断导致快照损坏）：
+//   1. 创建临时文件 path_.tmp
+//   2. 将所有数据写入临时文件
+//   3. flush 临时文件确保数据落盘
+//   4. 删除旧的正式文件（如有），将 .tmp rename 为正式文件
+//
+// 二进制格式（v2，按固定顺序写入）：
+//   文件头（20B）：Magic(8B "OSSM2026") + Version(4B=2) + HeaderSize(4B=20) + Flags(4B=0)
+//   用户段：userCount(4B) + 逐个 UserAccount
+//   进程段：nextPid(4B) + pcbCount(4B) + 逐个 PCB（含 children 列表）
+//   就绪队列段：Q0.size + Q0 PIDs + Q1.size + Q1 PIDs + Q2.size + Q2 PIDs
+//   内存段：totalMemoryKB(4B) + algorithm(4B) + blockCount(4B) + 逐个 MemoryBlock
+//   调度段：schedulerRunning(bool) + schedulerOwner(string)
+//   VFS段（v2 新增）：nextFileId(4B) + fileCount(4B) + 逐个 VirtualFile
+//
+// 所有整数使用原生 little-endian，字符串使用 uint32_t length + raw bytes。
 bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) const {
     try {
         const std::filesystem::path finalPath(path_);
@@ -318,7 +346,7 @@ bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) c
         {
             std::ofstream output(tmpPath, std::ios::binary | std::ios::trunc);
             if (!output) {
-                message = "Save failed: cannot open temporary snapshot file.";
+                message = "[失败] 保存失败：无法打开临时快照文件。";
                 return false;
             }
 
@@ -364,7 +392,7 @@ bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) c
 
             output.flush();
             if (!output) {
-                message = "Save failed: failed to flush snapshot file.";
+                message = "[失败] 保存失败：无法刷新快照文件。";
                 return false;
             }
         }
@@ -374,21 +402,30 @@ bool SnapshotStore::save(const KernelSnapshot& snapshot, std::string& message) c
         error.clear();
         std::filesystem::rename(tmpPath, finalPath, error);
         if (error) {
-            message = "Save failed: cannot replace snapshot file: " + error.message();
+            message = "[失败] 保存失败：无法替换快照文件: " + error.message();
             return false;
         }
         return true;
     } catch (const std::exception& ex) {
-        message = std::string("Save failed: ") + ex.what();
+        message = std::string("[失败] 保存失败: ") + ex.what();
         return false;
     }
 }
 
+// load()：从二进制快照文件加载系统状态。
+//
+// 读取流程（必须与 save 完全相同的顺序）：
+//   1. 打开文件（只读二进制模式）
+//   2. 读取文件头，验证 Magic="OSSM2026"、版本号（支持 v1 和 v2）
+//   3. 按 save 的写入顺序反序列化各数据段
+//   4. 版本兼容：v1 快照没有 VFS 段，VFS 字段保持默认空值
+//
+// 版本号决定后续字段的读取范围：v1 版本读取到调度段为止，v2 版本继续读取 VFS 扩展段。
 bool SnapshotStore::load(KernelSnapshot& snapshot, std::string& message) const {
     try {
         std::ifstream input(path_, std::ios::binary);
         if (!input) {
-            message = "Load failed: state file does not exist or cannot be opened.";
+            message = "[失败] 加载失败：快照文件不存在或无法打开。";
             return false;
         }
 
@@ -462,7 +499,7 @@ bool SnapshotStore::load(KernelSnapshot& snapshot, std::string& message) const {
         snapshot = std::move(loaded);
         return true;
     } catch (const std::exception& ex) {
-        message = std::string("Load failed: ") + ex.what();
+        message = std::string("[失败] 加载失败: ") + ex.what();
         return false;
     }
 }

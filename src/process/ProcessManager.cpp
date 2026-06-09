@@ -1,5 +1,7 @@
 #include "process/ProcessManager.h"
 
+#include "util/StringUtil.h"
+
 #include <algorithm>
 #include <iomanip>
 #include <limits>
@@ -17,7 +19,7 @@ namespace {
 
 [[nodiscard]] std::string joinIds(const std::vector<std::uint32_t>& ids) {
     if (ids.empty()) {
-        return "none";
+        return "无";
     }
 
     std::ostringstream output;
@@ -32,8 +34,6 @@ namespace {
 
 } // namespace
 
-// ProcessManager 只维护 PCB 表、父子进程关系和就绪队列索引；
-// 进程内存的实际分配/释放由 Kernel 协调 MemoryManager 完成。
 bool ProcessManager::createProcess(
     const std::string& owner,
     const std::string& name,
@@ -46,6 +46,16 @@ bool ProcessManager::createProcess(
     return createProcessWithMemory(owner, name, memKB, 0, priority, totalTime, ppid, ignoredPid, message);
 }
 
+// createProcessWithMemory：创建进程并分配内存。
+// 流程：
+//   1. 校验参数（owner 非空、名称非空、memKB>0、优先级 0-15、总时间>0）
+//   2. 校验父进程存在性（如果指定了 ppid）
+//   3. 分配 PID（全局递增，不回收复用）
+//   4. 构造 PCB 结构体（状态=READY，计算队列层级和初始时间片）
+//   5. 添加到 pcbTable_（PID → PCB 映射）
+//   6. 如果是子进程，将 PID 添加到父进程的 children 列表
+//   7. 入队到对应层级的就绪队列（enqueueReadyLocked）
+// 注意：内存已在调用方（Kernel）通过 MemoryManager 分配完成，此处只接收 memStart。
 bool ProcessManager::createProcessWithMemory(
     const std::string& owner,
     const std::string& name,
@@ -57,30 +67,30 @@ bool ProcessManager::createProcessWithMemory(
     std::uint32_t& outPid,
     std::string& message) {
     if (owner.empty()) {
-        message = "Create failed: user must login first.";
+        message = "[失败] 创建失败：请先登录。";
         return false;
     }
     if (name.empty()) {
-        message = "Create failed: process name cannot be empty.";
+        message = "[失败] 创建失败：进程名不能为空。";
         return false;
     }
     if (memKB == 0) {
-        message = "Create failed: memKB must be greater than 0.";
+        message = "[失败] 创建失败：内存大小必须大于 0 KB。";
         return false;
     }
     if (!isValidPriority(priority)) {
-        message = "Create failed: priority must be in range 0 to 15.";
+        message = "[失败] 创建失败：优先级范围为 0-15。";
         return false;
     }
     if (totalTime == 0) {
-        message = "Create failed: totalTime must be greater than 0.";
+        message = "[失败] 创建失败：总时间必须大于 0。";
         return false;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
     const std::uint32_t parentPid = ppid.value_or(0);
     if (parentPid != 0 && !hasOwnedProcessLocked(owner, parentPid)) {
-        message = "Create failed: parent PID does not exist or access denied.";
+        message = "[失败] 创建失败：父 PID 不存在或访问被拒绝。";
         return false;
     }
 
@@ -101,24 +111,21 @@ bool ProcessManager::createProcessWithMemory(
     pcb.swappedOut = false;
 
     const std::uint32_t pid = pcb.pid;
-    // pcbTable_ 是以 PID 为主键的进程控制块表，是进程查询、状态迁移和快照导出的权威数据源。
     pcbTable_.emplace(pid, std::move(pcb));
     if (parentPid != 0) {
-        // children 只保存同一用户下已验证的父子关系，用于进程树展示和递归 kill。
         pcbTable_.at(parentPid).children.push_back(pid);
     }
-    // READY 进程必须同步进入对应优先级队列，否则调度器无法选中它。
     enqueueReadyLocked(pid);
     outPid = pid;
 
     std::ostringstream output;
-    output << "[OK] Process created.\n"
+    output << "[成功] 进程创建成功。\n"
            << "PID=" << pid
-           << ", Name=" << name
-           << ", State=READY"
-           << ", Priority=" << priority
-           << ", Queue=" << queueName(queueLevelForPriority(priority))
-           << ", Memory=" << memKB << "KB";
+           << ", 名称=" << name
+           << ", 状态=READY"
+           << ", 优先级=" << priority
+           << ", 队列=" << queueName(queueLevelForPriority(priority))
+           << ", 内存=" << memKB << "KB";
     message = output.str();
     return true;
 }
@@ -135,13 +142,12 @@ bool ProcessManager::killProcess(
     std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!hasOwnedProcessLocked(owner, pid)) {
-        message = "Kill failed: PID does not exist or access denied.";
+        message = "[失败] 删除失败：PID 不存在或访问被拒绝。";
         return false;
     }
 
     std::vector<std::uint32_t> removed;
     std::unordered_set<std::uint32_t> visited;
-    // 删除进程时先收集整棵子树，保证父进程退出时不会遗留孤儿 PCB。
     collectSubtreeLocked(owner, pid, removed, visited);
 
     for (const auto removedPid : removed) {
@@ -164,9 +170,8 @@ bool ProcessManager::killProcess(
         pcbTable_.erase(removedPid);
     }
 
-    // 物理内存释放由 Kernel 在拿到 removedPids 后统一协调 MemoryManager 完成。
     std::ostringstream output;
-    output << "[OK] Killed process subtree. Removed PIDs: " << joinIds(removed);
+    output << "[成功] 删除进程子树。已移除 PID：" << joinIds(removed);
     message = output.str();
     removedPids = removed;
     return true;
@@ -176,23 +181,22 @@ bool ProcessManager::blockProcess(const std::string& owner, std::uint32_t pid, s
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        message = "Block failed: PID does not exist or access denied.";
+        message = "[失败] 阻塞失败：PID 不存在或访问被拒绝。";
         return false;
     }
 
     auto& pcb = it->second;
     if (pcb.state != ProcessState::READY && pcb.state != ProcessState::RUNNING) {
-        message = "Block failed: only READY or RUNNING process can be blocked.";
+        message = "[失败] 阻塞失败：只能阻塞 READY 或 RUNNING 状态的进程。";
         return false;
     }
 
     const auto oldState = toString(pcb.state);
-    // 阻塞会使进程失去调度资格，因此必须从就绪队列移除后再改状态。
     removeFromReadyQueuesLocked(pid);
     pcb.state = ProcessState::BLOCKED;
 
     std::ostringstream output;
-    output << "[OK] PID=" << pid << " blocked: " << oldState << " -> BLOCKED.";
+    output << "[成功] PID=" << pid << " 已阻塞：" << oldState << " -> BLOCKED。";
     message = output.str();
     return true;
 }
@@ -201,20 +205,19 @@ bool ProcessManager::wakeupProcess(const std::string& owner, std::uint32_t pid, 
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        message = "Wakeup failed: PID does not exist or access denied.";
+        message = "[失败] 唤醒失败：PID 不存在或访问被拒绝。";
         return false;
     }
 
     auto& pcb = it->second;
     if (pcb.state != ProcessState::BLOCKED) {
-        message = "Wakeup failed: only BLOCKED process can be awakened.";
+        message = "[失败] 唤醒失败：只能唤醒 BLOCKED 状态的进程。";
         return false;
     }
 
-    // 唤醒只把 BLOCKED 进程恢复为 READY，并重新按 queueLevel 挂回就绪队列。
     pcb.state = ProcessState::READY;
     enqueueReadyLocked(pid);
-    message = "[OK] PID=" + std::to_string(pid) + " awakened: BLOCKED -> READY.";
+    message = "[成功] PID=" + std::to_string(pid) + " 已唤醒：BLOCKED -> READY。";
     return true;
 }
 
@@ -222,25 +225,24 @@ bool ProcessManager::suspendProcess(const std::string& owner, std::uint32_t pid,
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        message = "Suspend failed: PID does not exist or access denied.";
+        message = "[失败] 挂起失败：PID 不存在或访问被拒绝。";
         return false;
     }
 
     auto& pcb = it->second;
     const auto oldState = toString(pcb.state);
-    // 挂起保持“原来是否可运行”的语义：READY/RUNNING 进入 SUSPENDED_READY，BLOCKED 进入 SUSPENDED_BLOCKED。
     if (pcb.state == ProcessState::READY || pcb.state == ProcessState::RUNNING) {
         removeFromReadyQueuesLocked(pid);
         pcb.state = ProcessState::SUSPENDED_READY;
     } else if (pcb.state == ProcessState::BLOCKED) {
         pcb.state = ProcessState::SUSPENDED_BLOCKED;
     } else {
-        message = "Suspend failed: process state cannot be suspended.";
+        message = "[失败] 挂起失败：该进程状态不能挂起。";
         return false;
     }
 
     std::ostringstream output;
-    output << "[OK] PID=" << pid << " suspended: " << oldState << " -> " << toString(pcb.state) << '.';
+    output << "[成功] PID=" << pid << " 已挂起：" << oldState << " -> " << toString(pcb.state) << "。";
     message = output.str();
     return true;
 }
@@ -249,25 +251,24 @@ bool ProcessManager::resumeProcess(const std::string& owner, std::uint32_t pid, 
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        message = "Resume failed: PID does not exist or access denied.";
+        message = "[失败] 恢复失败：PID 不存在或访问被拒绝。";
         return false;
     }
 
     auto& pcb = it->second;
     const auto oldState = toString(pcb.state);
-    // 恢复时只有 SUSPENDED_READY 会重新进入就绪队列，SUSPENDED_BLOCKED 仍保持阻塞语义。
     if (pcb.state == ProcessState::SUSPENDED_READY) {
         pcb.state = ProcessState::READY;
         enqueueReadyLocked(pid);
     } else if (pcb.state == ProcessState::SUSPENDED_BLOCKED) {
         pcb.state = ProcessState::BLOCKED;
     } else {
-        message = "Resume failed: only suspended process can be resumed.";
+        message = "[失败] 恢复失败：只能恢复挂起状态的进程。";
         return false;
     }
 
     std::ostringstream output;
-    output << "[OK] PID=" << pid << " resumed: " << oldState << " -> " << toString(pcb.state) << '.';
+    output << "[成功] PID=" << pid << " 已恢复：" << oldState << " -> " << toString(pcb.state) << "。";
     message = output.str();
     return true;
 }
@@ -278,21 +279,20 @@ bool ProcessManager::reniceProcess(
     int newPriority,
     std::string& message) {
     if (!isValidPriority(newPriority)) {
-        message = "Renice failed: priority must be in range 0 to 15.";
+        message = "[失败] 修改优先级失败：优先级范围为 0-15。";
         return false;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        message = "Renice failed: PID does not exist or access denied.";
+        message = "[失败] 修改优先级失败：PID 不存在或访问被拒绝。";
         return false;
     }
 
     auto& pcb = it->second;
     const int oldPriority = pcb.priority;
     const int oldQueue = pcb.queueLevel;
-    // renice 会改变队列层级；READY 进程需要先摘队再按新优先级入队，避免队列中出现重复 PID。
     if (pcb.state == ProcessState::READY) {
         removeFromReadyQueuesLocked(pid);
     }
@@ -306,7 +306,7 @@ bool ProcessManager::reniceProcess(
     }
 
     std::ostringstream output;
-    output << "[OK] PID=" << pid << " priority changed: "
+    output << "[成功] PID=" << pid << " 优先级已修改："
            << oldPriority << '(' << queueName(oldQueue) << ") -> "
            << newPriority << '(' << queueName(pcb.queueLevel) << ')';
     message = output.str();
@@ -317,28 +317,26 @@ bool ProcessManager::markSwappedOut(const std::string& owner, std::uint32_t pid,
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        message = "Swap out failed: PID does not exist or access denied.";
+        message = "[失败] 换出失败：PID 不存在或访问被拒绝。";
         return false;
     }
     auto& pcb = it->second;
     if (pcb.swappedOut || pcb.state == ProcessState::SWAPPED) {
-        message = "Swap out failed: process is already swapped out.";
+        message = "[失败] 换出失败：该进程已被换出。";
         return false;
     }
 
     removeFromReadyQueuesLocked(pid);
-    // 换出释放物理内存后，PCB 仍保留所需内存大小，便于缺页恢复时重新申请。
     pcb.swappedOut = true;
     pcb.memStart = 0;
     pcb.state = ProcessState::SWAPPED;
-    message = "[OK] PID=" + std::to_string(pid) + " marked as SWAPPED.";
+    message = "[成功] PID=" + std::to_string(pid) + " 已标记为 SWAPPED。";
     return true;
 }
 
 std::optional<std::uint32_t> ProcessManager::pickNextReadyProcess(const std::string& owner) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // 调度器始终从高优先级队列开始扫描；其他用户的 READY 进程会被保留，不能被当前用户调度。
     for (auto& queue : readyQueues_) {
         for (auto it = queue.begin(); it != queue.end();) {
             const auto pid = *it;
@@ -393,11 +391,13 @@ bool ProcessManager::demoteProcess(std::uint32_t pid) {
     if (pcb.queueLevel < 2) {
         ++pcb.queueLevel;
     }
-    // MLFQ 降级后重置时间片，下一次重新入队时按新队列的量程运行。
     pcb.timeSliceLeft = timeSliceForQueue(pcb.queueLevel);
     return true;
 }
 
+// markRunning：READY → RUNNING。
+// 从就绪队列移除 → 状态改为 RUNNING → 确保 timeSliceLeft 非零（必要时重置为队列默认值）。
+// Scheduler::step 在选中进程后调用此方法。
 bool ProcessManager::markRunning(std::uint32_t pid) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
@@ -446,13 +446,12 @@ bool ProcessManager::tickProcess(std::uint32_t pid, std::uint32_t ticks, std::st
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.state != ProcessState::RUNNING || ticks == 0) {
-        log = "Tick failed: PID does not exist or is not RUNNING.";
+        log = "[失败] Tick 失败：PID 不存在或不是 RUNNING 状态。";
         return false;
     }
 
     auto& pcb = it->second;
     std::ostringstream output;
-    // 每个 tick 只推进 1 个时间单位，便于课程演示观察执行时间和剩余时间的变化。
     for (std::uint32_t tick = 1; tick <= ticks && pcb.remainingTime > 0; ++tick) {
         ++pcb.executedTime;
         --pcb.remainingTime;
@@ -461,8 +460,8 @@ bool ProcessManager::tickProcess(std::uint32_t pid, std::uint32_t ticks, std::st
         }
         output << "tick " << tick << '/' << ticks
                << ": PID=" << pid
-               << " executed=" << pcb.executedTime << '/' << pcb.totalTime
-               << ", remaining=" << pcb.remainingTime << '\n';
+               << " 执行=" << pcb.executedTime << '/' << pcb.totalTime
+               << ", 剩余=" << pcb.remainingTime << '\n';
     }
 
     log = output.str();
@@ -529,7 +528,6 @@ std::vector<PCB> ProcessManager::getProcessCopiesForUser(const std::string& owne
             copies.push_back(pcb);
         }
     }
-    // 按 PID 升序排列，方便 overview 进程树构建
     std::sort(copies.begin(), copies.end(), [](const PCB& left, const PCB& right) {
         return left.pid < right.pid;
     });
@@ -553,31 +551,31 @@ std::string ProcessManager::showProcess(const std::string& owner, std::uint32_t 
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pcbTable_.find(pid);
     if (it == pcbTable_.end() || it->second.owner != owner) {
-        return "Process not found or access denied.";
+        return "[失败] 进程不存在或访问被拒绝。";
     }
 
     const auto& pcb = it->second;
     std::ostringstream output;
-    output << "=== PCB Detail ===\n"
+    output << "=== PCB 详情 ===\n"
            << "PID: " << pcb.pid << '\n'
            << "PPID: " << pcb.ppid << '\n'
-           << "Name: " << pcb.name << '\n'
-           << "Owner: " << pcb.owner << '\n'
-           << "State: " << toString(pcb.state) << '\n'
-           << "Priority: " << pcb.priority << '\n'
-           << "Queue: " << queueName(pcb.queueLevel) << '\n'
-           << "CPU Time: " << pcb.executedTime << " / " << pcb.totalTime << '\n'
-           << "Remaining: " << pcb.remainingTime << '\n'
-           << "Time Slice Left: " << pcb.timeSliceLeft << '\n'
-           << "Memory: ";
+           << "名称: " << pcb.name << '\n'
+           << "所有者: " << pcb.owner << '\n'
+           << "状态: " << toString(pcb.state) << '\n'
+           << "优先级: " << pcb.priority << '\n'
+           << "队列: " << queueName(pcb.queueLevel) << '\n'
+           << "CPU 时间: " << pcb.executedTime << " / " << pcb.totalTime << '\n'
+           << "剩余时间: " << pcb.remainingTime << '\n'
+           << "剩余时间片: " << pcb.timeSliceLeft << '\n'
+           << "内存: ";
     if (pcb.swappedOut) {
-        output << "swapped out, required=" << pcb.memSize << "KB\n";
+        output << "已换出，需求=" << pcb.memSize << "KB\n";
     } else {
-        output << "start=" << pcb.memStart << "KB, size=" << pcb.memSize << "KB\n";
+        output << "起始=" << pcb.memStart << "KB, 大小=" << pcb.memSize << "KB\n";
     }
     output
-           << "Swapped Out: " << (pcb.swappedOut ? "true" : "false") << '\n'
-           << "Children: " << joinIds(sortedIds(pcb.children));
+           << "是否换出: " << (pcb.swappedOut ? "是" : "否") << '\n'
+           << "子进程: " << joinIds(sortedIds(pcb.children));
     return output.str();
 }
 
@@ -594,35 +592,39 @@ std::string ProcessManager::listProcesses(const std::string& owner) const {
     });
 
     if (visible.empty()) {
-        return "No process found for current user.";
+        return "当前用户没有进程。";
     }
 
     std::ostringstream output;
-    output << "=== PCB List for user: " << owner << " ===\n"
-           << std::left << std::setw(6) << "PID"
-           << std::setw(7) << "PPID"
-           << std::setw(12) << "Name"
-           << std::setw(18) << "State"
-           << std::setw(7) << "Prio"
-           << std::setw(8) << "Queue"
-           << std::setw(10) << "CPU"
-           << std::setw(10) << "MemStart"
-           << std::setw(8) << "MemKB"
-           << "Swapped\n";
+    output << "=== 进程列表 / PCB List [用户: " << owner << "] ===\n"
+           << std::left
+           << padRightDisplayWidth("PID", 6)
+           << padRightDisplayWidth("PPID", 6)
+           << padRightDisplayWidth("Name", 14)
+           << padRightDisplayWidth("State", 18)
+           << padRightDisplayWidth("Prio", 6)
+           << padRightDisplayWidth("Queue", 7)
+           << padRightDisplayWidth("CPU", 10)
+           << padRightDisplayWidth("MemStart", 10)
+           << padRightDisplayWidth("MemKB", 8)
+           << padRightDisplayWidth("Swap", 6)
+           << '\n';
 
     for (const auto& pcb : visible) {
         std::ostringstream cpu;
         cpu << pcb.executedTime << '/' << pcb.totalTime;
-        output << std::left << std::setw(6) << pcb.pid
-               << std::setw(7) << pcb.ppid
-               << std::setw(12) << pcb.name
-               << std::setw(18) << toString(pcb.state)
-               << std::setw(7) << pcb.priority
-               << std::setw(8) << queueName(pcb.queueLevel)
-               << std::setw(10) << cpu.str()
-               << std::setw(10) << (pcb.swappedOut ? "-" : std::to_string(pcb.memStart))
-               << std::setw(8) << pcb.memSize
-               << (pcb.swappedOut ? "true" : "false") << '\n';
+        output << std::left
+               << padRightDisplayWidth(std::to_string(pcb.pid), 6)
+               << padRightDisplayWidth(std::to_string(pcb.ppid), 6)
+               << padRightDisplayWidth(pcb.name, 14)
+               << padRightDisplayWidth(toString(pcb.state), 18)
+               << padRightDisplayWidth(std::to_string(pcb.priority), 6)
+               << padRightDisplayWidth(queueName(pcb.queueLevel), 7)
+               << padRightDisplayWidth(cpu.str(), 10)
+               << padRightDisplayWidth(pcb.swappedOut ? "-" : std::to_string(pcb.memStart), 10)
+               << padRightDisplayWidth(std::to_string(pcb.memSize), 8)
+               << padRightDisplayWidth(pcb.swappedOut ? "是" : "否", 6)
+               << '\n';
     }
 
     std::string result = output.str();
@@ -647,9 +649,9 @@ std::string ProcessManager::processTree(const std::string& owner) const {
     std::sort(roots.begin(), roots.end());
 
     std::ostringstream output;
-    output << "Process Tree for user: " << owner;
+    output << "进程树 / Process Tree [用户: " << owner << "]";
     if (roots.empty()) {
-        output << "\nNo process found for current user.";
+        output << "\n当前用户没有进程。";
         return output.str();
     }
 
@@ -664,7 +666,7 @@ std::string ProcessManager::processTree(const std::string& owner) const {
 std::string ProcessManager::readyQueueSnapshot(const std::string& owner) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream output;
-    output << "Ready Queues:";
+    output << "就绪队列:";
     for (std::size_t q = 0; q < readyQueues_.size(); ++q) {
         output << '\n' << queueName(static_cast<int>(q)) << ": ";
         bool first = true;
@@ -680,7 +682,7 @@ std::string ProcessManager::readyQueueSnapshot(const std::string& owner) const {
             first = false;
         }
         if (first) {
-            output << "empty";
+            output << "空";
         }
     }
     return output.str();
@@ -759,7 +761,6 @@ void ProcessManager::rebuildParentChildRelationsIfNeeded() {
         pcb.children.clear();
     }
 
-    // 载入快照后以 ppid 为准重建 children，避免损坏文件留下悬挂的子进程引用。
     for (const auto& [pid, pcb] : pcbTable_) {
         if (pcb.ppid == 0) {
             continue;
@@ -801,9 +802,9 @@ bool ProcessManager::validateReadyQueues(std::string& message) {
     }
 
     if (removed == 0) {
-        message = "Ready queue validation passed.";
+        message = "[提示] 就绪队列校验通过。";
     } else {
-        message = "Ready queue validation repaired " + std::to_string(removed) + " invalid entries.";
+        message = "[提示] 就绪队列校验修复了 " + std::to_string(removed) + " 个无效条目。";
     }
     return true;
 }
@@ -855,13 +856,16 @@ void ProcessManager::enqueueReadyLocked(std::uint32_t pid) {
     }
 
     removeFromReadyQueuesLocked(pid);
-    // 就绪队列只保存 PID，完整状态仍回查 pcbTable_；这样队列结构轻量且便于快照校验。
     const auto queueIndex = static_cast<std::size_t>(it->second.queueLevel);
     if (queueIndex < readyQueues_.size()) {
         readyQueues_[queueIndex].push_back(pid);
     }
 }
 
+// collectSubtreeLocked：递归收集进程子树中的所有 PID（按 PID 排序）。
+// 用于 kill_pcb 时收集需要删除的全部子孙进程。
+// visited 集合防止环形父子关系导致无限递归。
+// 收集顺序：父进程 → 子进程（PID 升序），保证 kill 输出顺序稳定。
 void ProcessManager::collectSubtreeLocked(
     const std::string& owner,
     std::uint32_t pid,
@@ -878,7 +882,6 @@ void ProcessManager::collectSubtreeLocked(
 
     visited.insert(pid);
     ordered.push_back(pid);
-    // 递归按 PID 排序遍历子进程，使 kill 输出和测试结果稳定。
     for (const auto childPid : sortedIds(it->second.children)) {
         collectSubtreeLocked(owner, childPid, ordered, visited);
     }
@@ -898,21 +901,28 @@ void ProcessManager::appendTreeNodeLocked(
     }
 
     if (!isRoot) {
-        output << prefix << (isLast ? "`- " : "|- ");
+        output << prefix << (isLast ? "\xe2\x94\x94\xe2\x94\x80 " : "\xe2\x94\x9c\xe2\x94\x80 ");
     }
 
     if (visited.find(pid) != visited.end()) {
-        output << "PID=" << pid << " (cycle detected)";
+        output << "PID=" << pid << " (cycle)";
         return;
     }
 
     visited.insert(pid);
     const auto& pcb = it->second;
-    output << pcb.name << '(' << pcb.pid << ") ["
-           << toString(pcb.state)
-           << ", prio=" << pcb.priority
-           << ", q=" << queueName(pcb.queueLevel)
-           << ", mem=" << pcb.memSize << "KB]";
+
+    output << std::left
+           << padRightDisplayWidth(pcb.name + "(" + std::to_string(pcb.pid) + ")", 24)
+           << ' ' << padRightDisplayWidth(toString(pcb.state), 14)
+           << " Prio=" << std::right << std::setw(2) << pcb.priority
+           << "  Q" << pcb.queueLevel
+           << "  CPU=" << std::setw(3) << pcb.executedTime << '/' << std::setw(3) << pcb.totalTime;
+    if (pcb.swappedOut) {
+        output << "  SWAPPED";
+    } else {
+        output << "  Mem=" << std::setw(3) << pcb.memStart << '+' << std::setw(3) << pcb.memSize << "KB";
+    }
 
     std::vector<std::uint32_t> visibleChildren;
     for (const auto childPid : pcb.children) {
@@ -923,7 +933,7 @@ void ProcessManager::appendTreeNodeLocked(
     }
     std::sort(visibleChildren.begin(), visibleChildren.end());
 
-    const std::string childPrefix = isRoot ? "" : prefix + (isLast ? "   " : "|  ");
+    const std::string childPrefix = isRoot ? "" : prefix + (isLast ? "   " : "\xe2\x94\x82  ");
     for (std::size_t i = 0; i < visibleChildren.size(); ++i) {
         output << '\n';
         appendTreeNodeLocked(
