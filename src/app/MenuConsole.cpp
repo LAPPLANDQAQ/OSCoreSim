@@ -1,5 +1,6 @@
 #include "app/MenuConsole.h"
 
+#include <algorithm>
 #include <cctype>
 #include <sstream>
 #include <utility>
@@ -34,6 +35,45 @@ std::string maskedCommandForDisplay(const std::string& command) {
         return name + " " + username + " ******";
     }
     return command;
+}
+
+bool isExitToken(const std::string& input) {
+    const auto normalized = toLowerAscii(trim(input));
+    return normalized == "q" || normalized == "quit" || normalized == "exit" || normalized == "back" || normalized == "0";
+}
+
+bool isValidMemoryTag(const std::string& value) {
+    const auto trimmed = trim(value);
+    return !trimmed.empty() &&
+           trimmed.size() <= 32 &&
+           std::all_of(trimmed.begin(), trimmed.end(), [](unsigned char ch) {
+               return std::isalnum(ch) != 0 || ch == '_' || ch == '-' || ch == '.';
+           });
+}
+
+bool isPositiveIntegerText(const std::string& input) {
+    const auto value = trim(input);
+    return !value.empty() &&
+           std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+               return std::isdigit(ch) != 0;
+           });
+}
+
+bool isZeroIntegerText(const std::string& input) {
+    const auto value = trim(input);
+    return !value.empty() &&
+           std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+               return ch == '0';
+           });
+}
+
+bool isNegativeIntegerText(const std::string& input) {
+    const auto value = trim(input);
+    return value.size() > 1 &&
+           value.front() == '-' &&
+           std::all_of(value.begin() + 1, value.end(), [](unsigned char ch) {
+               return std::isdigit(ch) != 0;
+           });
 }
 
 } // namespace
@@ -223,9 +263,7 @@ bool MenuConsole::handleMemoryMenu(std::istream& input, std::ostream& output) {
             return false;
         }
         if (choice == "1") {
-            const auto size = askRequired(input, output, "请输入分配大小KB：");
-            if (eof_) return true;
-            if (!size.empty() && execute(output, "alloc " + size)) return true;
+            if (handleContinuousManualMemoryAllocation(input, output)) return true;
         } else if (choice == "2") {
             const auto addr = askRequired(input, output, "请输入起始地址：");
             if (eof_) return true;
@@ -254,6 +292,106 @@ bool MenuConsole::handleMemoryMenu(std::istream& input, std::ostream& output) {
         }
     }
     return true;
+}
+
+bool MenuConsole::handleContinuousManualMemoryAllocation(std::istream& input, std::ostream& output) {
+    // 参考 lab1.c 的实验式交互：先说明模块目的，再循环收集输入，退出时统一展示当前状态。
+    // 菜单层只拼接 alloc 命令，不直接访问 MemoryManager；Master/Client 仍由 executor_ 保持原有路由。
+    output << "\n========== 分配内存 ==========\n"
+           << "每个内存区需要输入：内存区名称 + 内存大小 KB。\n"
+           << "内存区名称会显示在 show_mem 的 Tag 列中。\n"
+           << "输入 0 可结束连续分配并返回内存管理菜单。\n\n"
+           << "示例输入：\n"
+           << "名称：buf1\n"
+           << "大小：100\n";
+
+    bool hasAllocationAttempt = false;
+    const auto finishAllocation = [&]() {
+        output << "已结束连续分配流程，返回内存管理菜单。\n";
+        return hasAllocationAttempt && showCurrentMemoryState(output);
+    };
+
+    while (!eof_) {
+
+        std::string rawName;
+        if (!readLine(input, output, "请输入内存区名称（输入 0 退出）：", rawName)) {
+            return true;
+        }
+
+        const auto name = trim(rawName);
+        if (isExitToken(name)) {
+            return finishAllocation();
+        }
+        if (name.empty()) {
+            output << "内存区名称不能为空，请重新输入。\n";
+            continue;
+        }
+        if (!isValidMemoryTag(name)) {
+            output << "内存区名称只能包含字母、数字、下划线、横线或点号，请重新输入。\n";
+            continue;
+        }
+
+        std::string rawSize;
+        if (!readLine(input, output, "请输入内存大小 KB（0 退出）：", rawSize)) {
+            return true;
+        }
+
+        const auto size = trim(rawSize);
+        if (isExitToken(size)) {
+            return finishAllocation();
+        }
+        if (size.empty()) {
+            output << "内存大小不能为空，请重新输入。\n";
+            continue;
+        }
+        if (isNegativeIntegerText(size)) {
+            output << "内存大小必须大于 0 KB，请重新输入。\n";
+            continue;
+        }
+        if (!isPositiveIntegerText(size)) {
+            output << "内存大小必须是正整数 KB，请重新输入。\n";
+            continue;
+        }
+        if (isZeroIntegerText(size)) {
+            output << "内存大小必须大于 0 KB，请重新输入。\n";
+            continue;
+        }
+
+        const auto command = "alloc " + name + " " + size;
+        output << "\n系统将执行命令：\n" << command << '\n';
+        if (executeMemoryAllocation(output, command)) {
+            return true;
+        }
+        hasAllocationAttempt = true;
+    }
+
+    return true;
+}
+
+bool MenuConsole::executeMemoryAllocation(std::ostream& output, const std::string& command) {
+    output << "\n正在执行命令：\n" << maskedCommandForDisplay(command) << '\n';
+    const auto result = executor_(command);
+
+    output << "\n命令执行结果：\n";
+    if (result.message.empty()) {
+        output << "（无输出）\n";
+    } else {
+        output << result.message << '\n';
+    }
+
+    return result.shouldExit || result.fatalError;
+}
+
+bool MenuConsole::showCurrentMemoryState(std::ostream& output) const {
+    output << "\n========== 当前内存分区 ==========\n";
+    const auto mapResult = executor_("show_mem");
+    if (mapResult.message.empty()) {
+        output << "（无输出）\n";
+    } else {
+        output << mapResult.message << '\n';
+    }
+
+    return mapResult.shouldExit || mapResult.fatalError;
 }
 
 bool MenuConsole::handleSchedulerMenu(std::istream& input, std::ostream& output) {
@@ -383,6 +521,7 @@ bool MenuConsole::handleVfsMenu(std::istream& input, std::ostream& output) {
 }
 
 bool MenuConsole::execute(std::ostream& output, const std::string& command) const {
+    // executor_ 由 ConsoleApp 注入：Master 走 Kernel::submitCommand，Client 走 NamedPipeClient，菜单层不区分底层通道。
     output << "\n正在执行命令：" << maskedCommandForDisplay(command) << '\n';
     const auto result = executor_(command);
 

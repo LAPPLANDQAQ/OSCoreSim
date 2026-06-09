@@ -16,6 +16,12 @@ public:
     MemoryManager();
 
     bool allocateManual(const std::string& owner, std::uint32_t sizeKB, std::uint32_t& outStart, std::string& message);
+    bool allocateManual(
+        const std::string& owner,
+        const std::string& tag,
+        std::uint32_t sizeKB,
+        std::uint32_t& outStart,
+        std::string& message);
     bool allocateForProcess(
         const std::string& owner,
         std::uint32_t pid,

@@ -35,6 +35,9 @@ private:
     bool handleContinuousCreateProcess(std::istream& input, std::ostream& output);
     bool executeProcessCommandAndShowTable(std::ostream& output, const std::string& command);
     bool handleMemoryMenu(std::istream& input, std::ostream& output);
+    bool handleContinuousManualMemoryAllocation(std::istream& input, std::ostream& output);
+    bool executeMemoryAllocation(std::ostream& output, const std::string& command);
+    bool showCurrentMemoryState(std::ostream& output) const;
     bool handleSchedulerMenu(std::istream& input, std::ostream& output);
     bool handlePersistenceMenu(std::istream& input, std::ostream& output);
     bool handleOverviewMenu(std::istream& input, std::ostream& output);

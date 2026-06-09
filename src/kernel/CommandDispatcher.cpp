@@ -2,7 +2,9 @@
 
 #include "util/StringUtil.h"
 
+#include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -13,6 +15,20 @@
 namespace oscore {
 
 namespace {
+
+[[nodiscard]] std::string allocUsageText() {
+    return "Usage: alloc <sizeKB>\nor: alloc <name> <sizeKB>";
+}
+
+[[nodiscard]] bool isValidMemoryTag(const std::string& value) {
+    if (value.empty() || value.size() > 32) {
+        return false;
+    }
+
+    return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isalnum(ch) != 0 || ch == '_' || ch == '-' || ch == '.';
+    });
+}
 
 [[nodiscard]] bool parseUint32Strict(const std::string& text, std::uint32_t& value) {
     if (text.empty()) {
@@ -54,6 +70,7 @@ Command CommandDispatcher::parse(const std::string& line) const {
     Command command;
     command.rawLine = line;
 
+    // 原始命令只做轻量拆词：命令名统一小写，参数按空白分隔；复杂状态校验放在 dispatch 分支内。
     std::istringstream stream(line);
     std::string token;
     if (!(stream >> token)) {
@@ -126,6 +143,7 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "create_pcb") {
+        // 进程和内存属于用户态资源，必须登录后才能创建，避免匿名命令污染 PCB/内存表。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -185,24 +203,39 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "alloc") {
+        // alloc 是手动内存实验命令，只产生 KERNEL/manual 内存块，不创建 PCB。
+        // 兼容旧格式 alloc <sizeKB>，新格式 alloc <name> <sizeKB> 仅把 name 写入 MemoryBlock::tag。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
         }
-        if (command.arguments.size() != 1) {
-            return {false, "Usage: alloc <sizeKB>", false};
+
+        std::string tag = "manual";
+        std::string sizeText;
+        if (command.arguments.size() == 1) {
+            sizeText = command.arguments[0];
+        } else if (command.arguments.size() == 2) {
+            tag = command.arguments[0];
+            sizeText = command.arguments[1];
+            if (!isValidMemoryTag(tag)) {
+                return {false, allocUsageText(), false};
+            }
+        } else {
+            return {false, allocUsageText(), false};
         }
+
         std::uint32_t sizeKB = 0;
-        if (!parseUint32Strict(command.arguments[0], sizeKB)) {
-            return {false, "Usage: alloc <sizeKB>", false};
+        if (!parseUint32Strict(sizeText, sizeKB) || sizeKB == 0) {
+            return {false, allocUsageText(), false};
         }
         std::uint32_t start = 0;
         std::string message;
-        const bool ok = memoryManager.allocateManual(userManager.currentUser(), sizeKB, start, message);
+        const bool ok = memoryManager.allocateManual(userManager.currentUser(), tag, sizeKB, start, message);
         return {ok, message, false};
     }
 
     if (command.name == "free_mem") {
+        // free_mem 只释放当前用户通过 alloc 得到的手动块；进程块必须走 kill_pcb 或 swap_out。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -234,6 +267,7 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "set_alloc_algo") {
+        // 分配算法切换影响后续 allocateLocked 的空闲块选择，不改变现有分区布局。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -468,7 +502,8 @@ std::string CommandDispatcher::helpText() const {
            << "  readyq\n"
            << "\n"
            << "Memory commands:\n"
-           << "  alloc <sizeKB>              Manually allocate kernel memory\n"
+           << "  alloc <sizeKB>              Manually allocate kernel memory with tag manual\n"
+           << "  alloc <name> <sizeKB>       Manually allocate named kernel memory\n"
            << "  free_mem <addr>             Free manually allocated memory by start address\n"
            << "  show_mem                    Show memory block table and ASCII memory map\n"
            << "  compact                     Compact memory and merge free space\n"

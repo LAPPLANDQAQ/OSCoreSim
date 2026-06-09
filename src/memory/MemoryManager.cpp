@@ -8,6 +8,7 @@
 namespace oscore {
 
 MemoryManager::MemoryManager() {
+    // 动态分区用 blocks_ 顺序表示整段物理内存；初始状态只有一个覆盖全内存的 FREE 块。
     blocks_.push_back(MemoryBlock{0, totalMemoryKB_, MemoryBlockType::FREE, 0, "", ""});
 }
 
@@ -16,8 +17,17 @@ bool MemoryManager::allocateManual(
     std::uint32_t sizeKB,
     std::uint32_t& outStart,
     std::string& message) {
-    // 手动内存用于课程实验中的显式 alloc/free，标记为 KERNEL 块但仍记录 owner 做权限隔离。
-    return allocateLocked(owner, 0, "manual", sizeKB, MemoryBlockType::KERNEL, outStart, message);
+    return allocateManual(owner, "manual", sizeKB, outStart, message);
+}
+
+bool MemoryManager::allocateManual(
+    const std::string& owner,
+    const std::string& tag,
+    std::uint32_t sizeKB,
+    std::uint32_t& outStart,
+    std::string& message) {
+    // 手动内存用于课程实验中的显式 alloc/free，标记为 KERNEL 块但仍记录 owner 和 tag 便于 show_mem 观察。
+    return allocateLocked(owner, 0, tag, sizeKB, MemoryBlockType::KERNEL, outStart, message);
 }
 
 bool MemoryManager::allocateForProcess(
@@ -156,6 +166,7 @@ CompactionResult MemoryManager::compact() {
 std::string MemoryManager::showMemory(const std::string& owner) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream output;
+    // start + sizeKB 描述一个连续地址区间，show_mem 直接展示当前分区表而不改变任何状态。
     output << "=== Memory Blocks ===\n"
            << std::left << std::setw(8) << "Start"
            << std::setw(8) << "End"
@@ -229,6 +240,7 @@ std::string MemoryManager::memoryStat() const {
 bool MemoryManager::setAlgorithm(const std::string& algoName, std::string& message) {
     const auto normalized = normalizeAlgorithmName(algoName);
     std::lock_guard<std::mutex> lock(mutex_);
+    // 这里只切换后续分配策略，不重排现有内存块，避免 set_alloc_algo 产生隐式副作用。
     if (normalized == "FF" || normalized == "FIRST" || normalized == "FIRST_FIT") {
         algorithm_ = AllocAlgorithm::FIRST_FIT;
     } else if (normalized == "BF" || normalized == "BEST" || normalized == "BEST_FIT") {
@@ -338,6 +350,7 @@ std::vector<MemoryBlock> MemoryManager::exportBlocks() const {
 
 void MemoryManager::importBlocks(const std::vector<MemoryBlock>& blocks) {
     std::lock_guard<std::mutex> lock(mutex_);
+    // 快照导入后重新排序并合并 FREE 块，保证后续分配算法看到的是规范化分区表。
     blocks_ = blocks;
     sortBlocksLocked();
     mergeFreeBlocksLocked();
