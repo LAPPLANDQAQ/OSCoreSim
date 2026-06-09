@@ -164,9 +164,10 @@ Kernel scheduler thread
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 
-# 或使用 Visual Studio 自带的 CMake
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -S . -B build -G "Visual Studio 17 2022" -A x64
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build build --config Release
+# 或使用 Visual Studio 自带的 CMake，将目录替换为本机 VS CMake bin 目录
+$vsCMakeBin = "<VS2022_CMake_bin>"
+& (Join-Path $vsCMakeBin "cmake.exe") -S . -B build -G "Visual Studio 17 2022" -A x64
+& (Join-Path $vsCMakeBin "cmake.exe") --build build --config Release
 ```
 
 生成的可执行文件：
