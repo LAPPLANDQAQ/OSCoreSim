@@ -1,6 +1,6 @@
 # Persistent OS Core Simulator
 
-Persistent OS Core Simulator 是一个面向操作系统课程设计的 C++20 命令行内核模拟器。项目运行环境为 Windows 11 Professional、VS Code、CMake、MSVC / Visual Studio Build Tools，不依赖 GUI 框架或数据库。
+Persistent OS Core Simulator 是一个面向操作系统课程设计的 C++20 命令行内核模拟器。项目运行环境为 Windows 11 Professional、Visual Studio 2022 Professional / MSVC、CMake，不依赖 GUI 框架或数据库。
 
 ## 已完成阶段
 
@@ -190,7 +190,7 @@ cmd /c ".\build\Release\os_sim.exe < tests\full_demo_commands.txt"
 # 终端 B: .\build\Release\os_sim.exe    （Client）
 ```
 
-交互启动后会先显示中文数字菜单；在主菜单选择 `9. 进入原始命令模式` 后，会切换到原始命令提示符。脚本重定向输入时不会等待菜单编号，会直接执行原始命令脚本；在 CMD 中可直接运行 `.\build\Release\os_sim.exe < tests\full_demo_commands.txt`，在 PowerShell 中使用上面的 `cmd /c` 写法。
+交互启动后会先显示中文数字菜单；在主菜单选择 `8. 进入原始命令模式` 后，会切换到原始命令提示符。脚本重定向输入时不会等待菜单编号，会直接执行原始命令脚本；在 CMD 中可直接运行 `.\build\Release\os_sim.exe < tests\full_demo_commands.txt`，在 PowerShell 中使用上面的 `cmd /c` 写法。
 
 原始命令提示符：
 
@@ -267,7 +267,8 @@ OS-SIM[CLIENT]>    # 客户端
 
 | 命令 | 说明 |
 |------|------|
-| `alloc <sizeKB>` | 手动分配 KERNEL 内存块 |
+| `alloc <sizeKB>` | 手动分配 KERNEL 内存块，Tag 默认为 `manual` |
+| `alloc <name> <sizeKB>` | 手动分配命名内存区，`name` 会显示在 `show_mem` 的 Tag 列 |
 | `free_mem <addr>` | 按起始地址释放手动分配的内存 |
 | `show_mem` | 显示内存分区表和 ASCII 内存图 |
 | `compact` | 内存紧缩，同步更新 PCB 的 memStart |
@@ -275,6 +276,8 @@ OS-SIM[CLIENT]>    # 客户端
 | `set_alloc_algo <FF\|BF\|WF>` | 切换分配算法 |
 | `pgfault [pid]` | 模拟缺页中断处理流程 |
 | `swap_out <pid>` | 模拟换出进程并释放物理内存 |
+
+中文菜单中的“内存管理 → 手动分配内存”会连续收集“内存区名称 + 内存大小 KB”，底层仍执行现有 `alloc <name> <sizeKB>` 命令。每次分配后菜单会自动追加显示 `show_mem` 和 `list_pcb`，便于课堂演示观察内存分区与 PCB 状态；原始命令模式和脚本重定向模式不会自动追加这些菜单辅助输出。
 
 ### 调度命令
 

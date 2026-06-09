@@ -37,11 +37,6 @@ std::string maskedCommandForDisplay(const std::string& command) {
     return command;
 }
 
-bool isExitToken(const std::string& input) {
-    const auto normalized = toLowerAscii(trim(input));
-    return normalized == "q" || normalized == "quit" || normalized == "exit" || normalized == "back" || normalized == "0";
-}
-
 bool isValidMemoryTag(const std::string& value) {
     const auto trimmed = trim(value);
     return !trimmed.empty() &&
@@ -295,32 +290,24 @@ bool MenuConsole::handleMemoryMenu(std::istream& input, std::ostream& output) {
 }
 
 bool MenuConsole::handleContinuousManualMemoryAllocation(std::istream& input, std::ostream& output) {
-    // 参考 lab1.c 的实验式交互：先说明模块目的，再循环收集输入，退出时统一展示当前状态。
+    // 与连续创建进程保持同一种菜单风格：输入一组完整字段，执行一次命令，展示状态，再询问是否继续。
     // 菜单层只拼接 alloc 命令，不直接访问 MemoryManager；Master/Client 仍由 executor_ 保持原有路由。
-    output << "\n========== 分配内存 ==========\n"
-           << "每个内存区需要输入：内存区名称 + 内存大小 KB。\n"
+    output << "\n========== 连续分配内存 ==========\n"
+           << "输入内存区信息后将创建一个手动内存区，每次分配后自动显示内存分区和进程表。\n"
            << "内存区名称会显示在 show_mem 的 Tag 列中。\n"
-           << "输入 0 可结束连续分配并返回内存管理菜单。\n\n"
-           << "示例输入：\n"
-           << "名称：buf1\n"
-           << "大小：100\n";
-
-    bool hasAllocationAttempt = false;
-    const auto finishAllocation = [&]() {
-        output << "已结束连续分配流程，返回内存管理菜单。\n";
-        return hasAllocationAttempt && showCurrentMemoryState(output);
-    };
+           << "手动内存区不会创建 PCB，进程表仅用于对照观察。\n"
+           << "内存区名称输入 0 可退出连续分配流程。\n";
 
     while (!eof_) {
-
         std::string rawName;
         if (!readLine(input, output, "请输入内存区名称（输入 0 退出）：", rawName)) {
             return true;
         }
 
         const auto name = trim(rawName);
-        if (isExitToken(name)) {
-            return finishAllocation();
+        if (name == "0") {
+            output << "已退出连续分配流程，返回内存管理菜单。\n";
+            return false;
         }
         if (name.empty()) {
             output << "内存区名称不能为空，请重新输入。\n";
@@ -332,14 +319,11 @@ bool MenuConsole::handleContinuousManualMemoryAllocation(std::istream& input, st
         }
 
         std::string rawSize;
-        if (!readLine(input, output, "请输入内存大小 KB（0 退出）：", rawSize)) {
+        if (!readLine(input, output, "请输入内存大小 KB：", rawSize)) {
             return true;
         }
 
         const auto size = trim(rawSize);
-        if (isExitToken(size)) {
-            return finishAllocation();
-        }
         if (size.empty()) {
             output << "内存大小不能为空，请重新输入。\n";
             continue;
@@ -359,16 +343,25 @@ bool MenuConsole::handleContinuousManualMemoryAllocation(std::istream& input, st
 
         const auto command = "alloc " + name + " " + size;
         output << "\n系统将执行命令：\n" << command << '\n';
-        if (executeMemoryAllocation(output, command)) {
+        if (executeMemoryAllocationAndShowState(output, command)) {
             return true;
         }
-        hasAllocationAttempt = true;
+
+        std::string continueChoice;
+        if (!readLine(input, output, "\n是否继续分配内存？（输入 1 继续，其他任意键返回）：", continueChoice)) {
+            return true;
+        }
+        if (trim(continueChoice) != "1") {
+            output << "已返回内存管理菜单。\n";
+            return false;
+        }
     }
 
     return true;
 }
 
-bool MenuConsole::executeMemoryAllocation(std::ostream& output, const std::string& command) {
+bool MenuConsole::executeMemoryAllocationAndShowState(std::ostream& output, const std::string& command) {
+    // 自动 show_mem/list_pcb 只是中文菜单的观察便利；原始命令模式和脚本模式不会调用这个辅助函数。
     output << "\n正在执行命令：\n" << maskedCommandForDisplay(command) << '\n';
     const auto result = executor_(command);
 
@@ -379,10 +372,6 @@ bool MenuConsole::executeMemoryAllocation(std::ostream& output, const std::strin
         output << result.message << '\n';
     }
 
-    return result.shouldExit || result.fatalError;
-}
-
-bool MenuConsole::showCurrentMemoryState(std::ostream& output) const {
     output << "\n========== 当前内存分区 ==========\n";
     const auto mapResult = executor_("show_mem");
     if (mapResult.message.empty()) {
@@ -391,7 +380,17 @@ bool MenuConsole::showCurrentMemoryState(std::ostream& output) const {
         output << mapResult.message << '\n';
     }
 
-    return mapResult.shouldExit || mapResult.fatalError;
+    output << "\n========== 当前进程表 ==========\n";
+    const auto processResult = executor_("list_pcb");
+    if (processResult.message.empty()) {
+        output << "（无输出）\n";
+    } else {
+        output << processResult.message << '\n';
+    }
+
+    return result.shouldExit || result.fatalError ||
+           mapResult.shouldExit || mapResult.fatalError ||
+           processResult.shouldExit || processResult.fatalError;
 }
 
 bool MenuConsole::handleSchedulerMenu(std::istream& input, std::ostream& output) {
