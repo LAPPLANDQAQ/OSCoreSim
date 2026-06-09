@@ -12,8 +12,9 @@
 ### 方式一：使用 VS 自带 CMake（推荐）
 
 ```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -S . -B build -G "Visual Studio 17 2022" -A x64
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build build --config Release
+$vsCMakeBin = "<VS2022_CMake_bin>"
+& (Join-Path $vsCMakeBin "cmake.exe") -S . -B build -G "Visual Studio 17 2022" -A x64
+& (Join-Path $vsCMakeBin "cmake.exe") --build build --config Release
 ```
 
 ### 方式二：使用系统 PATH 中的 cmake
@@ -73,7 +74,8 @@ cmd /c ".\build\Release\os_sim.exe < tests\full_demo_commands.txt"
 
 ```powershell
 # 单元测试
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe" --test-dir build -C Release --output-on-failure
+$vsCMakeBin = "<VS2022_CMake_bin>"
+& (Join-Path $vsCMakeBin "ctest.exe") --test-dir build -C Release --output-on-failure
 
 # 验收测试（逐个执行）
 cmd /c ".\build\Release\os_sim.exe < tests\01_user_test.txt"
