@@ -22,7 +22,7 @@
 |------|------|
 | 操作系统 | Windows 11 Professional 64-bit |
 | 开发工具 | Visual Studio 2022 Professional |
-| 构建系统 | CMake 3.20+ |
+| 构建系统 | Visual Studio 2022 原生解决方案 |
 | 语言标准 | C++20 |
 | 编译器 | MSVC 19.x（Visual Studio 2022 自带） |
 | 依赖 | 无第三方库，仅使用 C++ 标准库和 Windows API |
