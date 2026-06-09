@@ -106,6 +106,10 @@ OSCoreSim/
 │       ├── StringUtil.h        #    字符串工具（toLower / trim）
 │       └── TablePrinter.h      #    表格打印辅助
 │
+├── tools/                      # 辅助脚本
+│   ├── run_regression.ps1      #   诊断脚本回归测试
+│   └── decode_octal.py         #   八进制转义序列解码工具
+│
 └── tests/                      # 测试脚本与单元测试
     ├── unit_tests.cpp          # C++ 单元测试（BlockingQueue、用户、PCB、内存、调度、持久化、VFS）
     ├── demo_commands.txt       # 早期 P1-P2 演示命令集
@@ -118,6 +122,18 @@ OSCoreSim/
     ├── 06_vfs_test.txt         # VFS 验收测试（touch_file/write_file/read_file/rm_file + 隔离）
     ├── 07_overview_test.txt    # overview 动态一致性验证
     └── 08_multi_instance_test.md # 双窗口 IPC 手动验收流程说明
+    └── diagnostics/             # 诊断与回归测试脚本
+        ├── 00_clean_boot_test.txt
+        ├── 01_user_session_test.txt
+        ├── 02_process_test.txt
+        ├── 03_memory_test.txt
+        ├── 04_scheduler_test.txt
+        ├── 05_persistence_test.txt
+        ├── 06_vfs_test.txt
+        ├── 07_full_regression_test.txt
+        ├── 08_vfs_unicode_multiline_test.txt  # VFS 中文文件名 + 多行内容测试
+        ├── 09_visualization_format_test.txt   # 可视化输出格式验证
+        └── 10_chinese_text_ui_test.txt        # 全面中文化 UI 验收测试
 ```
 
 ## Architecture
@@ -240,6 +256,7 @@ OS-SIM[CLIENT]>    # 客户端
 | `help` | 显示可用命令列表 |
 | `status` | 显示内核状态（worker、调度器、用户、进程、内存） |
 | `clear` | 使用空行模拟清屏 |
+| `reset_system` | 重置系统到干净状态（清除所有用户、PCB、内存、VFS） |
 | `exit` / `quit` | 安全退出（Master 会先停 PipeServer 再停 Kernel） |
 
 ### 用户命令
@@ -445,6 +462,14 @@ cmd /c ".\x64\Release\OSCoreSim.exe < tests\02_process_test.txt"
 cmd /c ".\x64\Release\OSCoreSim.exe < tests\03_memory_test.txt"
 cmd /c ".\x64\Release\OSCoreSim.exe < tests\04_scheduler_test.txt"
 cmd /c ".\x64\Release\OSCoreSim.exe < tests\full_demo_commands.txt"
+
+# 诊断回归测试（一键执行全部）
+powershell -ExecutionPolicy Bypass -File tools\run_regression.ps1
+
+# 单项诊断测试
+cmd /c ".\x64\Release\OSCoreSim.exe < tests\diagnostics\08_vfs_unicode_multiline_test.txt"
+cmd /c ".\x64\Release\OSCoreSim.exe < tests\diagnostics\09_visualization_format_test.txt"
+cmd /c ".\x64\Release\OSCoreSim.exe < tests\diagnostics\10_chinese_text_ui_test.txt"
 ```
 
 **单元测试覆盖：**
@@ -464,3 +489,11 @@ cmd /c ".\x64\Release\OSCoreSim.exe < tests\full_demo_commands.txt"
 - VFS 无目录层级（扁平文件空间）
 - 无文件打开表、inode、复杂权限位
 - Windows 专有实现（Named Pipe / Named Mutex）
+- 进程树和内存图全局视图会显示其他用户的 OTHER_USER 占位
+
+## Code Documentation
+
+全部 37 个源文件（`.h` + `.cpp`）均包含完整的中文注释：
+- 头文件：类职责说明、每个 public 方法的参数和功能描述
+- 实现文件：每个函数的 doc block + 关键算法的逐步骤注释
+- 核心算法（MLFQ 调度、FF/BF/WF 分配、内存紧缩、二进制快照格式）包含详细的理论说明
