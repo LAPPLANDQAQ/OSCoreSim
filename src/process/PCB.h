@@ -17,6 +17,8 @@ enum class ProcessState {
     SWAPPED
 };
 
+// PCB 进程控制块保存调度、父子关系、内存占用和换出状态。
+// 该结构保持为简单字段，便于 SnapshotStore 显式二进制序列化。
 struct PCB {
     std::uint32_t pid = 0;
     std::uint32_t ppid = 0;

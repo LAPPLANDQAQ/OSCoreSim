@@ -224,6 +224,10 @@ int main() {
     assert(!stepWithoutLogin.success);
     assert(stepWithoutLogin.message.find("requires login") != std::string::npos);
 
+    const auto overviewWithoutLogin = kernel.submitCommand("overview");
+    assert(!overviewWithoutLogin.success);
+    assert(overviewWithoutLogin.message.find("login") != std::string::npos);
+
     const auto showMemWithoutLogin = kernel.submitCommand("show_mem");
     assert(!showMemWithoutLogin.success);
     assert(showMemWithoutLogin.message.find("requires login") != std::string::npos);
@@ -244,6 +248,16 @@ int main() {
     const auto memAfterProcesses = kernel.submitCommand("show_mem");
     assert(memAfterProcesses.success);
     assert(memAfterProcesses.message.find("PROCESS") != std::string::npos);
+    auto invalidMemorySnapshot = kernel.exportSnapshot();
+    for (auto& block : invalidMemorySnapshot.memoryBlocks) {
+        if (block.type == oscore::MemoryBlockType::PROCESS && block.pid == 1) {
+            ++block.start;
+            break;
+        }
+    }
+    std::string invalidSnapshotMessage;
+    assert(!kernel.importSnapshot(invalidMemorySnapshot, invalidSnapshotMessage));
+    assert(invalidSnapshotMessage.find("PCB memory") != std::string::npos);
     const auto readyq = kernel.submitCommand("readyq");
     assert(readyq.success);
     assert(readyq.message.find("Q0: 1") != std::string::npos);
@@ -252,6 +266,37 @@ int main() {
     assert(schedStep.success);
     assert(schedStep.message.find("=== Scheduler Step ===") != std::string::npos);
     assert(schedStep.message.find("Selected PID=1") != std::string::npos);
+
+    const auto overview = kernel.submitCommand("overview");
+    assert(overview.success);
+    assert(overview.message.find("System Overview") != std::string::npos);
+    assert(overview.message.find("System Summary") != std::string::npos);
+    assert(overview.message.find("Process Tree") != std::string::npos);
+    assert(overview.message.find("Memory Map") != std::string::npos);
+    assert(overview.message.find("MLFQ") != std::string::npos);
+    assert(overview.message.find("dave") != std::string::npos);
+    assert(overview.message.find("init") != std::string::npos);
+
+    const auto writeFile = kernel.submitCommand("write_file note.txt hello operating system");
+    assert(writeFile.success);
+    const auto readFile = kernel.submitCommand("read_file note.txt");
+    assert(readFile.success);
+    assert(readFile.message.find("note.txt") != std::string::npos);
+    assert(readFile.message.find("hello operating system") != std::string::npos);
+    const auto listFiles = kernel.submitCommand("ls_file");
+    assert(listFiles.success);
+    assert(listFiles.message.find("note.txt") != std::string::npos);
+    const auto touchFile = kernel.submitCommand("touch_file empty.txt");
+    assert(touchFile.success);
+    const auto listWithEmpty = kernel.submitCommand("ls_file");
+    assert(listWithEmpty.success);
+    assert(listWithEmpty.message.find("empty.txt") != std::string::npos);
+    const auto removeEmpty = kernel.submitCommand("rm_file empty.txt");
+    assert(removeEmpty.success);
+    const auto listAfterRemove = kernel.submitCommand("ls_file");
+    assert(listAfterRemove.success);
+    assert(listAfterRemove.message.find("empty.txt") == std::string::npos);
+
     const auto blockShell = kernel.submitCommand("block_pcb 2");
     assert(blockShell.success);
     assert(kernel.submitCommand("wakeup_pcb 2").success);
@@ -283,11 +328,13 @@ int main() {
     assert(kernel.submitCommand("login dave pw").success);
     assert(kernel.submitCommand("create_pcb persisted 64 0 9").success);
     assert(kernel.submitCommand("set_alloc_algo BF").success);
+    assert(kernel.submitCommand("write_file persisted.txt persistent vfs content").success);
     const auto saveSnapshot = kernel.submitCommand("save");
     assert(saveSnapshot.success);
     assert(saveSnapshot.message.find("Processes:") != std::string::npos);
     assert(kernel.submitCommand("create_pcb temp 64 0 5").success);
     assert(kernel.submitCommand("list_pcb").message.find("temp") != std::string::npos);
+    assert(kernel.submitCommand("write_file temp_vfs.txt should disappear after load").success);
     const auto loadSnapshot = kernel.submitCommand("load");
     assert(loadSnapshot.success);
     assert(loadSnapshot.message.find("Please login again") != std::string::npos);
@@ -296,6 +343,15 @@ int main() {
     const auto restoredList = kernel.submitCommand("list_pcb");
     assert(restoredList.success);
     assert(restoredList.message.find("temp") == std::string::npos);
+    const auto restoredFiles = kernel.submitCommand("ls_file");
+    assert(restoredFiles.success);
+    assert(restoredFiles.message.find("persisted.txt") != std::string::npos);
+    assert(restoredFiles.message.find("temp_vfs.txt") == std::string::npos);
+    const auto restoredFile = kernel.submitCommand("read_file persisted.txt");
+    assert(restoredFile.success);
+    assert(restoredFile.message.find("persistent vfs content") != std::string::npos);
+    const auto missingTempFile = kernel.submitCommand("read_file temp_vfs.txt");
+    assert(missingTempFile.message.find("does not exist") != std::string::npos);
     assert(kernel.submitCommand("status").message.find("Snapshot File: data/unit_test_state.bin") != std::string::npos);
     assert(kernel.submitCommand("logout").success);
 
@@ -307,6 +363,12 @@ int main() {
     assert(reloadedKernel.submitCommand("whoami").message == "not logged in");
     assert(reloadedKernel.submitCommand("login dave pw").success);
     assert(reloadedKernel.submitCommand("list_pcb").message.find("persisted") != std::string::npos);
+    const auto reloadedFiles = reloadedKernel.submitCommand("ls_file");
+    assert(reloadedFiles.success);
+    assert(reloadedFiles.message.find("persisted.txt") != std::string::npos);
+    const auto reloadedFile = reloadedKernel.submitCommand("read_file persisted.txt");
+    assert(reloadedFile.success);
+    assert(reloadedFile.message.find("persistent vfs content") != std::string::npos);
     assert(reloadedKernel.submitCommand("status").message.find("Allocation Algorithm: BEST_FIT") != std::string::npos);
     reloadedKernel.stop();
 

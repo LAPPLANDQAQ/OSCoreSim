@@ -9,11 +9,19 @@
 
 namespace oscore {
 
+// MemoryManager 实现首次适应/最佳适应/最坏适应动态分区分配。
+// 它只管理内存块表；进程创建、终止和 compact 后的 PCB 同步由 Kernel/Dispatcher 协调。
 class MemoryManager {
 public:
     MemoryManager();
 
     bool allocateManual(const std::string& owner, std::uint32_t sizeKB, std::uint32_t& outStart, std::string& message);
+    bool allocateManual(
+        const std::string& owner,
+        const std::string& tag,
+        std::uint32_t sizeKB,
+        std::uint32_t& outStart,
+        std::string& message);
     bool allocateForProcess(
         const std::string& owner,
         std::uint32_t pid,

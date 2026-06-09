@@ -14,6 +14,8 @@
 
 namespace oscore {
 
+// ProcessManager 维护 PCB 表和三层 MLFQ 就绪队列。
+// 所有进程状态转换、父子关系维护、队列入队/出队都集中在这里完成，避免外部留下悬挂引用。
 class ProcessManager {
 public:
     bool createProcess(

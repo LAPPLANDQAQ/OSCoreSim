@@ -16,6 +16,7 @@ bool NamedPipeClient::sendCommand(const std::string& command, std::string& respo
     }
 
     // 连接到 Master 的命名管道
+    // CLIENT 只持有本次请求的 HANDLE，不拥有 Kernel 状态，也不直接访问快照文件。
     HANDLE pipe = CreateFileA(
         kPipeName,
         GENERIC_READ | GENERIC_WRITE,
@@ -40,7 +41,7 @@ bool NamedPipeClient::sendCommand(const std::string& command, std::string& respo
         return false;
     }
 
-    // 发送命令
+    // 发送命令。Client 不直接访问 Kernel 或 data/os_state.bin，只负责 IPC 转发。
     if (!writeMessage(pipe, command)) {
         CloseHandle(pipe);
         response = "[ERROR] Failed to send command to Master.";
@@ -71,6 +72,7 @@ std::string NamedPipeClient::readMessage(HANDLE pipe) {
     }
 
     // 读取消息体
+    // 响应长度由服务端前缀指定，循环读取可避免 overview 等长输出被固定缓冲区截断。
     std::vector<char> buffer(length);
     DWORD totalRead = 0;
     while (totalRead < length) {
@@ -95,6 +97,7 @@ bool NamedPipeClient::writeMessage(HANDLE pipe, const std::string& message) {
     }
 
     // 写入消息体
+    // 命令同样采用 length + bytes 协议，与服务端读写函数严格对应。
     DWORD totalWritten = 0;
     const char* data = message.data();
     while (totalWritten < length) {

@@ -1,7 +1,11 @@
 #include "app/ConsoleApp.h"
+#include "app/MenuConsole.h"
 
+#include <cstdio>
 #include <iostream>
 #include <string>
+
+#include <io.h>
 
 namespace oscore {
 
@@ -38,14 +42,30 @@ void ConsoleApp::masterLoop(std::istream& input, std::ostream& output) {
 
     // 3. 打印 MASTER 启动 Banner
     output << "========================================\n";
-    output << " Persistent OS Core Simulator\n";
-    output << " C++20 / Windows / Course Design\n";
-    output << " Role: MASTER\n";
-    output << " Type 'help' to show available commands.\n";
+    output << " 可持久化操作系统核心模拟器\n";
+    output << " Windows / C++20 / 操作系统课程设计\n";
+    output << " 当前角色：MASTER\n";
+    output << " 输入 help 可查看原始命令列表。\n";
     output << "========================================\n";
     const auto startupMessage = kernel_.startupMessage();
     if (!startupMessage.empty()) {
         output << startupMessage << '\n';
+    }
+
+    // 交互终端显示中文数字菜单；脚本重定向时自动跳过，保持原始命令模式兼容。
+    if (isInteractiveInput(input)) {
+        MenuConsole menu(
+            InstanceRole::MASTER,
+            [this](const std::string& command) -> MenuCommandResult {
+                const auto response = kernel_.submitCommand(command);
+                return {response.message, response.shouldExit, false};
+            });
+
+        if (menu.run(input, output) == MenuOutcome::ExitProgram) {
+            pipeServer_.stop();
+            kernel_.stop();
+            return;
+        }
     }
 
     // 4. 本地命令输入循环
@@ -84,12 +104,29 @@ void ConsoleApp::clientLoop(std::istream& input, std::ostream& output) {
 
     // 打印 CLIENT 启动 Banner
     output << "========================================\n";
-    output << " Persistent OS Core Simulator\n";
-    output << " C++20 / Windows / Course Design\n";
-    output << " Role: CLIENT\n";
-    output << " Connected to Kernel Master through Named Pipe.\n";
-    output << " Type 'exit' to close this client window.\n";
+    output << " 可持久化操作系统核心模拟器\n";
+    output << " Windows / C++20 / 操作系统课程设计\n";
+    output << " 当前角色：CLIENT\n";
+    output << " 已通过 Named Pipe 连接到 MASTER 内核。\n";
+    output << " 输入 exit 可关闭当前客户端窗口。\n";
     output << "========================================\n";
+
+    // Client 菜单也只负责拼接命令，实际执行仍通过 Named Pipe 转发给 Master。
+    if (isInteractiveInput(input)) {
+        MenuConsole menu(
+            InstanceRole::CLIENT,
+            [this](const std::string& command) -> MenuCommandResult {
+                std::string response;
+                if (pipeClient_.sendCommand(command, response)) {
+                    return {response, false, false};
+                }
+                return {response + "\n[INFO] Client will exit because it cannot reach Master.", false, true};
+            });
+
+        if (menu.run(input, output) == MenuOutcome::ExitProgram) {
+            return;
+        }
+    }
 
     // 命令输入循环 — 每条命令通过 Named Pipe 发给 Master
     std::string line;
@@ -147,6 +184,14 @@ bool ConsoleApp::isLocalExitCommand(const std::string& line) {
 
     const auto cmd = lowered(name);
     return cmd == "exit" || cmd == "quit";
+}
+
+bool ConsoleApp::isInteractiveInput(std::istream& input) {
+    // 只有真实 std::cin 且连接到终端时才显示菜单；文件/管道输入保持脚本兼容。
+    if (&input != &std::cin) {
+        return false;
+    }
+    return _isatty(_fileno(stdin)) != 0;
 }
 
 } // namespace oscore

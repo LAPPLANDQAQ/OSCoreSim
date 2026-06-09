@@ -9,6 +9,8 @@
 
 namespace oscore {
 
+// BlockingQueue 是 Kernel 命令请求队列：前台线程 push，worker 线程阻塞 pop。
+// shutdown 会唤醒等待线程，保证程序退出时不遗留后台线程。
 template <typename T>
 class BlockingQueue {
 public:

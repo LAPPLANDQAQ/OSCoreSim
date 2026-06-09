@@ -14,6 +14,7 @@ std::string Scheduler::step(
     std::ostringstream output;
     output << "=== Scheduler Step ===\n\n";
 
+    // 每次 step 都是一次完整调度决策：先记录队列快照，再从 Q0 到 Q2 选择当前用户 READY 进程。
     const auto before = processManager.readyQueueSnapshot(owner);
     output << "[Before]\n" << before << "\n\n";
 
@@ -41,6 +42,7 @@ std::string Scheduler::step(
     }
 
     const int oldQueue = selected->queueLevel;
+    // 时间片只由队列层级决定：Q0 最短、Q2 最长，体现多级反馈队列的响应性和吞吐折中。
     const auto quantum = static_cast<std::uint32_t>(quantumForQueue(oldQueue));
     output << "[Select]\n"
            << "Scanning Q0 -> Q1 -> Q2";
@@ -68,6 +70,7 @@ std::string Scheduler::step(
 
     output << "[Run]\n";
     std::string tickLog;
+    // tickProcess 负责更新 executedTime、remainingTime 和 timeSliceLeft；Scheduler 只决定本轮最多运行多少 tick。
     if (!processManager.tickProcess(selected->pid, quantum, tickLog)) {
         (void)processManager.markReady(selected->pid);
         (void)processManager.enqueueReadyProcess(selected->pid);
@@ -89,11 +92,13 @@ std::string Scheduler::step(
         return output.str();
     }
 
+    // 重新读取 PCB 副本，避免使用运行前快照判断完成状态。
     const auto ticksUsed = afterRun->executedTime - selected->executedTime;
     output << "[Result]\n";
     if (afterRun->remainingTime == 0) {
         std::vector<std::uint32_t> removedPids;
         std::string killMessage;
+        // 完成进程按 kill 子树处理，确保父进程结束时子进程也被清理。
         processManager.killProcess(owner, selected->pid, removedPids, killMessage);
 
         output << "PID=" << selected->pid << " completed.\n"
@@ -107,8 +112,10 @@ std::string Scheduler::step(
             }
         }
     } else {
+        // 未完成的进程回到 READY；如果耗尽完整时间片，则按 MLFQ 规则降级。
         const bool usedFullQuantum = ticksUsed >= quantum;
         if (usedFullQuantum) {
+            // 用完整时间片仍未完成，说明该进程偏 CPU 密集，按 MLFQ 规则向低优先级队列移动。
             (void)processManager.demoteProcess(selected->pid);
         }
         (void)processManager.markReady(selected->pid);
@@ -140,6 +147,7 @@ void Scheduler::setRunning(bool running) {
 }
 
 int Scheduler::quantumForQueue(int queueLevel) const {
+    // Q0/Q1/Q2 的时间片与 ProcessManager 保持一致，课程演示时可直接对应 readyq 输出。
     switch (queueLevel) {
     case 0:
         return 2;

@@ -35,7 +35,8 @@ public:
         std::uint32_t totalMemoryKB,
         const SchedulerInfo& schedulerInfo,
         const std::string& snapshotPath,
-        const std::string& algorithmName) const;
+        const std::string& algorithmName,
+        std::size_t vfsFileCount) const;
 
 private:
     // [1] 系统摘要
@@ -49,26 +50,31 @@ private:
         double fragmentationRate,
         const SchedulerInfo& schedulerInfo,
         const std::string& snapshotPath,
-        const std::string& algorithmName) const;
+        const std::string& algorithmName,
+        std::size_t vfsFileCount) const;
 
-    // [2] 进程树
+    // [2] 进程表
+    [[nodiscard]] static std::string renderProcessTable(
+        const std::vector<PCB>& userProcesses);
+
+    // [3] 进程树
     [[nodiscard]] std::string renderProcessTree(
         const std::string& currentUser,
         const std::vector<PCB>& userProcesses) const;
 
-    // [3] 内存分区图
+    // [4] 内存分区图
     [[nodiscard]] std::string renderMemoryMap(
         const std::string& currentUser,
         const std::vector<MemoryBlock>& memoryBlocks,
         std::uint32_t totalMemoryKB) const;
 
-    // [4] MLFQ 多级反馈队列
+    // [5] MLFQ 多级反馈队列
     [[nodiscard]] std::string renderMLFQ(
         const std::string& currentUser,
         const std::array<std::vector<std::uint32_t>, 3>& readyQueues,
         const std::vector<PCB>& userProcesses) const;
 
-    // [5] Notes
+    // [6] Notes
     [[nodiscard]] static std::string renderNotes();
 
     // 辅助：构建进程树节点

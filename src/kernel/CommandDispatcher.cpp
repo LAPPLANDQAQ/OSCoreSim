@@ -2,7 +2,9 @@
 
 #include "util/StringUtil.h"
 
+#include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -13,6 +15,20 @@
 namespace oscore {
 
 namespace {
+
+[[nodiscard]] std::string allocUsageText() {
+    return "Usage: alloc <sizeKB>\nor: alloc <name> <sizeKB>";
+}
+
+[[nodiscard]] bool isValidMemoryTag(const std::string& value) {
+    if (value.empty() || value.size() > 32) {
+        return false;
+    }
+
+    return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isalnum(ch) != 0 || ch == '_' || ch == '-' || ch == '.';
+    });
+}
 
 [[nodiscard]] bool parseUint32Strict(const std::string& text, std::uint32_t& value) {
     if (text.empty()) {
@@ -54,6 +70,7 @@ Command CommandDispatcher::parse(const std::string& line) const {
     Command command;
     command.rawLine = line;
 
+    // 原始命令只做轻量拆词：命令名统一小写，参数按空白分隔；复杂状态校验放在 dispatch 分支内。
     std::istringstream stream(line);
     std::string token;
     if (!(stream >> token)) {
@@ -126,6 +143,7 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "create_pcb") {
+        // 进程和内存属于用户态资源，必须登录后才能创建，避免匿名命令污染 PCB/内存表。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -156,6 +174,7 @@ CommandResponse CommandDispatcher::dispatch(
         }
 
         const auto owner = userManager.currentUser();
+        // P4 后进程创建必须先申请真实内存；若 PCB 创建失败，再按 PID 回滚内存块，避免泄漏。
         const auto expectedPid = processManager.nextPid();
         std::uint32_t memStart = 0;
         std::string memoryMessage;
@@ -184,24 +203,39 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "alloc") {
+        // alloc 是手动内存实验命令，只产生 KERNEL/manual 内存块，不创建 PCB。
+        // 兼容旧格式 alloc <sizeKB>，新格式 alloc <name> <sizeKB> 仅把 name 写入 MemoryBlock::tag。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
         }
-        if (command.arguments.size() != 1) {
-            return {false, "Usage: alloc <sizeKB>", false};
+
+        std::string tag = "manual";
+        std::string sizeText;
+        if (command.arguments.size() == 1) {
+            sizeText = command.arguments[0];
+        } else if (command.arguments.size() == 2) {
+            tag = command.arguments[0];
+            sizeText = command.arguments[1];
+            if (!isValidMemoryTag(tag)) {
+                return {false, allocUsageText(), false};
+            }
+        } else {
+            return {false, allocUsageText(), false};
         }
+
         std::uint32_t sizeKB = 0;
-        if (!parseUint32Strict(command.arguments[0], sizeKB)) {
-            return {false, "Usage: alloc <sizeKB>", false};
+        if (!parseUint32Strict(sizeText, sizeKB) || sizeKB == 0) {
+            return {false, allocUsageText(), false};
         }
         std::uint32_t start = 0;
         std::string message;
-        const bool ok = memoryManager.allocateManual(userManager.currentUser(), sizeKB, start, message);
+        const bool ok = memoryManager.allocateManual(userManager.currentUser(), tag, sizeKB, start, message);
         return {ok, message, false};
     }
 
     if (command.name == "free_mem") {
+        // free_mem 只释放当前用户通过 alloc 得到的手动块；进程块必须走 kill_pcb 或 swap_out。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -233,6 +267,7 @@ CommandResponse CommandDispatcher::dispatch(
     }
 
     if (command.name == "set_alloc_algo") {
+        // 分配算法切换影响后续 allocateLocked 的空闲块选择，不改变现有分区布局。
         CommandResponse loginResponse;
         if (!requireLogin(userManager, loginResponse)) {
             return loginResponse;
@@ -254,6 +289,7 @@ CommandResponse CommandDispatcher::dispatch(
             return {false, "Usage: compact", false};
         }
         auto result = memoryManager.compact();
+        // 内存紧缩会移动 PROCESS 块，必须同步更新对应 PCB.memStart。
         for (const auto& [pid, newStart] : result.pidNewStart) {
             processManager.updateProcessMemoryStart(pid, newStart);
         }
@@ -353,6 +389,7 @@ CommandResponse CommandDispatcher::dispatch(
             std::vector<std::uint32_t> removedPids;
             ok = processManager.killProcess(owner, pid, removedPids, message);
             if (ok) {
+                // kill_pcb 会递归删除子树，随后逐个释放子树中所有进程的物理内存。
                 std::ostringstream released;
                 for (const auto removedPid : removedPids) {
                     std::string freeMessage;
@@ -434,24 +471,24 @@ CommandResponse CommandDispatcher::dispatch(
 
 std::string CommandDispatcher::helpText() const {
     std::ostringstream output;
-    output << "Available commands:\n"
-           << "  help    - show this command list\n"
-           << "  status  - show basic kernel status\n"
-           << "  clear   - clear the console area\n"
-           << "  exit    - cleanly shut down the simulator\n"
-           << "  quit    - cleanly shut down the simulator\n"
+    output << "可用命令：\n"
+           << "  help    - 显示命令列表\n"
+           << "  status  - 显示内核状态摘要\n"
+           << "  clear   - 清空当前控制台显示区域\n"
+           << "  exit    - 安全退出模拟器\n"
+           << "  quit    - 安全退出模拟器\n"
            << "\n"
-           << "Persistence commands:\n"
-           << "  save    Save complete simulator state to binary file\n"
-           << "  load    Load complete simulator state from binary file\n"
+           << "持久化命令：\n"
+           << "  save    将完整系统状态保存到二进制快照文件\n"
+           << "  load    从二进制快照文件加载完整系统状态\n"
            << "\n"
-           << "User commands:\n"
-           << "  register <username> <password>   Register a new user\n"
-           << "  login <username> <password>      Login to the simulator\n"
-           << "  logout                           Logout current session\n"
-           << "  whoami                           Show current login user\n"
+           << "用户命令：\n"
+           << "  register <username> <password>   注册新用户\n"
+           << "  login <username> <password>      登录模拟器\n"
+           << "  logout                           退出当前登录\n"
+           << "  whoami                           显示当前登录用户\n"
            << "\n"
-           << "Process commands:\n"
+           << "进程命令：\n"
            << "  create_pcb <name> <memKB> <priority> <totalTime> [ppid]\n"
            << "  kill_pcb <pid>\n"
            << "  block_pcb <pid>\n"
@@ -464,34 +501,35 @@ std::string CommandDispatcher::helpText() const {
            << "  renice <pid> <newPriority>\n"
            << "  readyq\n"
            << "\n"
-           << "Memory commands:\n"
-           << "  alloc <sizeKB>              Manually allocate kernel memory\n"
-           << "  free_mem <addr>             Free manually allocated memory by start address\n"
-           << "  show_mem                    Show memory block table and ASCII memory map\n"
-           << "  compact                     Compact memory and merge free space\n"
-           << "  mem_stat                    Show memory usage and fragmentation statistics\n"
-           << "  set_alloc_algo <FF|BF|WF>   Change dynamic allocation algorithm\n"
-           << "  pgfault [pid]               Simulate a page fault\n"
-           << "  swap_out <pid>              Simulate swapping out a process\n"
+           << "内存命令：\n"
+           << "  alloc <sizeKB>              手动分配内存，Tag 默认为 manual\n"
+           << "  alloc <name> <sizeKB>       手动分配命名内存区\n"
+           << "  free_mem <addr>             按起始地址释放手动分配内存\n"
+           << "  show_mem                    显示内存分区表和 ASCII 内存图\n"
+           << "  compact                     执行内存紧缩并合并空闲分区\n"
+           << "  mem_stat                    显示内存使用率和碎片统计\n"
+           << "  set_alloc_algo <FF|BF|WF>   切换动态分区分配算法\n"
+           << "  pgfault [pid]               模拟缺页中断\n"
+           << "  swap_out <pid>              模拟进程换出\n"
            << "\n"
-           << "Scheduler commands:\n"
-           << "  start_sched     Start automatic MLFQ scheduling\n"
-           << "  stop_sched      Stop automatic scheduling\n"
-           << "  restart_sched   Restart automatic scheduler\n"
-           << "  step            Execute one scheduling step and print decision details\n"
+           << "调度命令：\n"
+           << "  start_sched     启动自动 MLFQ 调度\n"
+           << "  stop_sched      停止自动调度\n"
+           << "  restart_sched   清理就绪队列后重启调度器\n"
+           << "  step            执行一次单步调度并打印决策过程\n"
            << "\n"
            << "\n"
-           << "Visualization commands:\n"
-           << "  overview    Show process tree, memory map, MLFQ queues, and system summary\n"
+           << "可视化命令：\n"
+           << "  overview    显示进程树、内存图、MLFQ 队列和系统摘要\n"
            << "\n"
-           << "Virtual file commands:\n"
-           << "  touch_file <name>             Create an empty virtual file\n"
-           << "  write_file <name> <content>   Write content to a virtual file\n"
-           << "  read_file <name>              Read a virtual file\n"
-           << "  ls_file                       List current user's virtual files\n"
-           << "  rm_file <name>                Remove a virtual file\n"
+           << "虚拟文件命令：\n"
+           << "  touch_file <name>             创建空虚拟文件\n"
+           << "  write_file <name> <content>   写入虚拟文件内容\n"
+           << "  read_file <name>              读取虚拟文件内容\n"
+           << "  ls_file                       列出当前用户的虚拟文件\n"
+           << "  rm_file <name>                删除虚拟文件\n"
            << "\n"
-           << "OS feature commands for VFS, persistence, and IPC will be added later.";
+           << "VFS、持久化和 IPC 相关命令均已集成到上述命令中。";
     return output.str();
 }
 

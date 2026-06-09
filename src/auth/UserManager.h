@@ -10,6 +10,8 @@
 
 namespace oscore {
 
+// UserManager 负责用户注册、登录会话、账户锁定和账户数据导入导出。
+// 当前系统是单控制台会话，但仍使用互斥量保护，便于后续多客户端共享访问。
 class UserManager {
 public:
     bool registerUser(const std::string& username, const std::string& password, std::string& message);

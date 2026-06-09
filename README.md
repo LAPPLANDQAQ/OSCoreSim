@@ -1,6 +1,6 @@
 # Persistent OS Core Simulator
 
-Persistent OS Core Simulator 是一个面向操作系统课程设计的 C++20 命令行内核模拟器。项目运行环境为 Windows 11 Professional、VS Code、CMake、MSVC / Visual Studio Build Tools，不依赖 GUI 框架或数据库。
+Persistent OS Core Simulator 是一个面向操作系统课程设计的 C++20 命令行内核模拟器。项目运行环境为 Windows 11 Professional、Visual Studio 2022 Professional / MSVC、CMake，不依赖 GUI 框架或数据库。
 
 ## 已完成阶段
 
@@ -164,9 +164,10 @@ Kernel scheduler thread
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 
-# 或使用 Visual Studio 自带的 CMake
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -S . -B build -G "Visual Studio 17 2022" -A x64
-& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build build --config Release
+# 或使用 Visual Studio 自带的 CMake，将目录替换为本机 VS CMake bin 目录
+$vsCMakeBin = "<VS2022_CMake_bin>"
+& (Join-Path $vsCMakeBin "cmake.exe") -S . -B build -G "Visual Studio 17 2022" -A x64
+& (Join-Path $vsCMakeBin "cmake.exe") --build build --config Release
 ```
 
 生成的可执行文件：
@@ -179,22 +180,52 @@ build\Release\os_sim_tests.exe   # 单元测试
 ## Run
 
 ```powershell
-# 交互模式（第一个实例自动成为 Master）
+# 交互模式（第一个实例自动成为 Master，默认进入中文数字菜单）
 .\build\Release\os_sim.exe
 
-# 脚本化演示
-.\build\Release\os_sim.exe < tests\full_demo_commands.txt
+# 脚本化演示（stdin 重定向时自动跳过菜单，直接进入原始命令模式）
+cmd /c ".\build\Release\os_sim.exe < tests\full_demo_commands.txt"
 
 # 多实例 IPC —— 打开两个终端
 # 终端 A: .\build\Release\os_sim.exe    （Master）
 # 终端 B: .\build\Release\os_sim.exe    （Client）
 ```
 
-启动后提示符：
+交互启动后会先显示中文数字菜单；在主菜单选择 `8. 进入原始命令模式` 后，会切换到原始命令提示符。脚本重定向输入时不会等待菜单编号，会直接执行原始命令脚本；在 CMD 中可直接运行 `.\build\Release\os_sim.exe < tests\full_demo_commands.txt`，在 PowerShell 中使用上面的 `cmd /c` 写法。
+
+原始命令提示符：
 
 ```text
 OS-SIM[MASTER]>    # 主控端
 OS-SIM[CLIENT]>    # 客户端
+```
+
+### 工作目录与快照文件
+
+程序使用相对路径 `data/os_state.bin` 读写二进制快照。**实际读取位置取决于程序启动时的当前工作目录：**
+
+| 启动方式 | 快照路径 |
+|----------|----------|
+| 项目根目录运行 `.\build\Release\os_sim.exe` | `当前目录\data\os_state.bin` ✅ |
+| 双击 `build\Release\os_sim.exe` | `build\Release\data\os_state.bin` ❌ |
+| VS 调试运行（工作目录设为项目根目录） | `项目根目录\data\os_state.bin` ✅ |
+
+**建议**：始终从项目根目录启动程序。
+
+**data/ 策略**：
+- `data/` 是运行时状态目录
+- 源码仓库只保留 `data/.gitkeep` 占位，不提交 `*.bin` 快照文件
+- 发行版的 `data/os_state.bin` 由用户首次运行后生成，或手动放入演示用快照
+
+### 发行版目录结构
+
+```text
+发行版/
+├── os_sim.exe              # 可执行程序
+├── data/
+│   └── os_state.bin        # 二进制快照（与 os_sim.exe 同级）
+├── tests/                  # 验收测试脚本
+└── 运行说明.md
 ```
 
 ## Commands
@@ -237,7 +268,8 @@ OS-SIM[CLIENT]>    # 客户端
 
 | 命令 | 说明 |
 |------|------|
-| `alloc <sizeKB>` | 手动分配 KERNEL 内存块 |
+| `alloc <sizeKB>` | 手动分配 KERNEL 内存块，Tag 默认为 `manual` |
+| `alloc <name> <sizeKB>` | 手动分配命名内存区，`name` 会显示在 `show_mem` 的 Tag 列 |
 | `free_mem <addr>` | 按起始地址释放手动分配的内存 |
 | `show_mem` | 显示内存分区表和 ASCII 内存图 |
 | `compact` | 内存紧缩，同步更新 PCB 的 memStart |
@@ -245,6 +277,8 @@ OS-SIM[CLIENT]>    # 客户端
 | `set_alloc_algo <FF\|BF\|WF>` | 切换分配算法 |
 | `pgfault [pid]` | 模拟缺页中断处理流程 |
 | `swap_out <pid>` | 模拟换出进程并释放物理内存 |
+
+中文菜单中的“内存管理 → 手动分配内存”会连续收集“内存区名称 + 内存大小 KB”，底层仍执行现有 `alloc <name> <sizeKB>` 命令。每次分配后菜单会自动追加显示 `show_mem` 和 `list_pcb`，便于课堂演示观察内存分区与 PCB 状态；原始命令模式和脚本重定向模式不会自动追加这些菜单辅助输出。
 
 ### 调度命令
 

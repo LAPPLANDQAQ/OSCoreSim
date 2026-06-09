@@ -19,6 +19,8 @@
 
 namespace oscore {
 
+// Kernel 是模拟器的中心协调者：拥有用户、进程、内存、调度器、VFS 和快照存储。
+// ConsoleApp/NamedPipe 只能提交命令，所有共享状态修改必须通过 Kernel worker 线程和 stateMutex_ 串行协调。
 class Kernel {
 public:
     explicit Kernel(std::string snapshotPath = "data/os_state.bin");
@@ -60,10 +62,13 @@ private:
     [[nodiscard]] bool validateSnapshot(const KernelSnapshot& snapshot, std::string& message) const;
     [[nodiscard]] std::string snapshotSummaryText(const KernelSnapshot& snapshot) const;
 
+    // stateMutex_ 保护 ProcessManager、MemoryManager、UserManager、VFS 之间的组合操作。
     mutable std::mutex stateMutex_;
     std::mutex consoleMutex_;
+    // 前台只入队，workerThread_ 负责真正执行命令，满足前后台线程分离要求。
     BlockingQueue<CommandRequest> requestQueue_;
     std::thread workerThread_;
+    // schedulerThread_ 独立周期执行 MLFQ step，和命令线程共用 stateMutex_ 避免竞态。
     std::thread schedulerThread_;
     CommandDispatcher dispatcher_;
     UserManager userManager_;

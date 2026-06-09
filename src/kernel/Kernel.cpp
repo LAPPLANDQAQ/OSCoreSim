@@ -12,6 +12,36 @@
 #include <utility>
 
 namespace oscore {
+namespace {
+
+std::string extractWriteFileContent(const Command& command) {
+    // write_file 的内容可能包含空格；Command::arguments 已经按空白拆分，
+    // 因此这里从原始命令行中定位第二个参数后的剩余文本，尽量保留正文内部空格。
+    const auto& line = command.rawLine;
+    auto pos = line.find_first_not_of(" \t\r\n");
+    if (pos == std::string::npos) {
+        return {};
+    }
+    pos = line.find_first_of(" \t\r\n", pos);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    pos = line.find_first_not_of(" \t\r\n", pos);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    pos = line.find_first_of(" \t\r\n", pos);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    pos = line.find_first_not_of(" \t\r\n", pos);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    return line.substr(pos);
+}
+
+} // namespace
 
 Kernel::Kernel(std::string snapshotPath) : snapshotStore_(std::move(snapshotPath)) {}
 
@@ -96,6 +126,7 @@ CommandResponse Kernel::submitCommand(
     const std::string& rawLine,
     const std::string& username,
     CommandSource source) {
+    // 前台输入线程只提交请求并等待 future；实际命令在 workerLoop 中串行执行。
     auto promise = std::make_shared<std::promise<CommandResponse>>();
     auto future = promise->get_future();
 
@@ -160,6 +191,7 @@ void Kernel::workerLoop() {
 
     CommandRequest request;
     while (requestQueue_.pop(request)) {
+        // requestQueue_ 将本地菜单、原始命令和 NamedPipe 客户端请求统一排队，避免并发修改内核状态。
         auto response = executeRequest(request);
         if (request.promise) {
             request.promise->set_value(response);
@@ -204,6 +236,7 @@ void Kernel::schedulerLoop() {
 CommandResponse Kernel::executeRequest(const CommandRequest& request) {
     try {
         const auto command = dispatcher_.parse(request.rawLine);
+        // Kernel 是所有子系统的协调层：命令执行期间持有 stateMutex_，保护用户、PCB、内存、调度和 VFS 的组合状态。
         std::lock_guard<std::mutex> lock(stateMutex_);
         const CommandContext context{
             request.id,
@@ -333,6 +366,7 @@ CommandResponse Kernel::handlePersistenceCommand(const Command& command) {
     }
 
     if (command.name == "save") {
+        // save 显式导出完整快照；不直接写 STL 内部布局，二进制格式由 SnapshotStore 控制。
         const auto snapshot = exportSnapshotLocked();
         std::string message;
         if (!snapshotStore_.save(snapshot, message)) {
@@ -346,6 +380,7 @@ CommandResponse Kernel::handlePersistenceCommand(const Command& command) {
     }
 
     if (command.name == "load") {
+        // load 前先停自动调度，防止导入快照时调度线程同时消费旧 ready queue。
         schedulerRunning_.store(false);
         scheduler_.setRunning(false);
         schedulerOwner_.clear();
@@ -388,6 +423,7 @@ CommandResponse Kernel::handleOverview(const Command& command) {
     const auto readyQueues = processManager_.exportReadyQueues();
     const auto memoryBlocks = memoryManager_.exportBlocks();
     const auto totalMemKB = memoryManager_.totalMemoryKB();
+    const auto vfsFileCount = vfs_.fileCountForUser(currentUser);
 
     // 构建调度器信息
     OverviewRenderer::SchedulerInfo schedulerInfo;
@@ -404,7 +440,8 @@ CommandResponse Kernel::handleOverview(const Command& command) {
         totalMemKB,
         schedulerInfo,
         snapshotStore_.defaultPath(),
-        memoryManager_.currentAlgorithmName());
+        memoryManager_.currentAlgorithmName(),
+        vfsFileCount);
 
     return {true, output, false};
 }
@@ -430,13 +467,9 @@ CommandResponse Kernel::handleVfsCommand(const Command& command) {
         if (command.arguments.size() < 2) {
             return {false, "Usage: write_file <name> <content>", false};
         }
-        // 文件名是第一个参数，剩余所有参数拼接为文件内容
+        // 文件名是第一个参数，正文从 rawLine 提取，保留菜单输入中的空格内容。
         const auto& name = command.arguments[0];
-        std::string content;
-        for (std::size_t i = 1; i < command.arguments.size(); ++i) {
-            if (i > 1) content += ' ';
-            content += command.arguments[i];
-        }
+        const auto content = extractWriteFileContent(command);
         std::string message;
         const bool ok = vfs_.writeFile(owner, name, content, message);
         return {ok, message, false};
@@ -478,6 +511,7 @@ bool Kernel::isVfsCommand(const std::string& name) const {
 
 KernelSnapshot Kernel::exportSnapshotLocked() const {
     KernelSnapshot snapshot;
+    // 快照覆盖用户、PCB、就绪队列、内存、调度元数据和 VFS，保证 save/load 后能恢复课程演示状态。
     snapshot.users = userManager_.exportUsers();
     snapshot.nextPid = processManager_.exportNextPid();
     snapshot.pcbs = processManager_.exportPcbs();
@@ -610,6 +644,7 @@ bool Kernel::validateSnapshot(const KernelSnapshot& snapshot, std::string& messa
         return false;
     }
 
+    std::unordered_map<std::uint32_t, const MemoryBlock*> processMemoryByPid;
     for (const auto& block : snapshot.memoryBlocks) {
         if (block.type == MemoryBlockType::PROCESS) {
             auto process = pcbs.find(block.pid);
@@ -617,10 +652,30 @@ bool Kernel::validateSnapshot(const KernelSnapshot& snapshot, std::string& messa
                 message = "invalid snapshot: PROCESS memory block does not match a PCB.";
                 return false;
             }
+            if (process->second.swappedOut || process->second.state == ProcessState::SWAPPED) {
+                message = "invalid snapshot: swapped PCB must not have PROCESS memory block.";
+                return false;
+            }
+            if (block.start != process->second.memStart || block.size != process->second.memSize) {
+                message = "invalid snapshot: PROCESS memory block does not match PCB memory fields.";
+                return false;
+            }
+            if (!processMemoryByPid.emplace(block.pid, &block).second) {
+                message = "invalid snapshot: duplicated PROCESS memory block for PID.";
+                return false;
+            }
         }
         if ((block.type == MemoryBlockType::KERNEL || block.type == MemoryBlockType::PROCESS) &&
             usernames.find(block.owner) == usernames.end()) {
             message = "invalid snapshot: memory owner does not exist.";
+            return false;
+        }
+    }
+
+    for (const auto& [pid, pcb] : pcbs) {
+        const bool swapped = pcb.swappedOut || pcb.state == ProcessState::SWAPPED;
+        if (!swapped && processMemoryByPid.find(pid) == processMemoryByPid.end()) {
+            message = "invalid snapshot: active PCB is missing PROCESS memory block.";
             return false;
         }
     }

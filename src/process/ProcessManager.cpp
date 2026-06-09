@@ -32,6 +32,8 @@ namespace {
 
 } // namespace
 
+// ProcessManager 只维护 PCB 表、父子进程关系和就绪队列索引；
+// 进程内存的实际分配/释放由 Kernel 协调 MemoryManager 完成。
 bool ProcessManager::createProcess(
     const std::string& owner,
     const std::string& name,
@@ -99,10 +101,13 @@ bool ProcessManager::createProcessWithMemory(
     pcb.swappedOut = false;
 
     const std::uint32_t pid = pcb.pid;
+    // pcbTable_ 是以 PID 为主键的进程控制块表，是进程查询、状态迁移和快照导出的权威数据源。
     pcbTable_.emplace(pid, std::move(pcb));
     if (parentPid != 0) {
+        // children 只保存同一用户下已验证的父子关系，用于进程树展示和递归 kill。
         pcbTable_.at(parentPid).children.push_back(pid);
     }
+    // READY 进程必须同步进入对应优先级队列，否则调度器无法选中它。
     enqueueReadyLocked(pid);
     outPid = pid;
 
@@ -136,6 +141,7 @@ bool ProcessManager::killProcess(
 
     std::vector<std::uint32_t> removed;
     std::unordered_set<std::uint32_t> visited;
+    // 删除进程时先收集整棵子树，保证父进程退出时不会遗留孤儿 PCB。
     collectSubtreeLocked(owner, pid, removed, visited);
 
     for (const auto removedPid : removed) {
@@ -181,6 +187,7 @@ bool ProcessManager::blockProcess(const std::string& owner, std::uint32_t pid, s
     }
 
     const auto oldState = toString(pcb.state);
+    // 阻塞会使进程失去调度资格，因此必须从就绪队列移除后再改状态。
     removeFromReadyQueuesLocked(pid);
     pcb.state = ProcessState::BLOCKED;
 
@@ -204,6 +211,7 @@ bool ProcessManager::wakeupProcess(const std::string& owner, std::uint32_t pid, 
         return false;
     }
 
+    // 唤醒只把 BLOCKED 进程恢复为 READY，并重新按 queueLevel 挂回就绪队列。
     pcb.state = ProcessState::READY;
     enqueueReadyLocked(pid);
     message = "[OK] PID=" + std::to_string(pid) + " awakened: BLOCKED -> READY.";
@@ -220,6 +228,7 @@ bool ProcessManager::suspendProcess(const std::string& owner, std::uint32_t pid,
 
     auto& pcb = it->second;
     const auto oldState = toString(pcb.state);
+    // 挂起保持“原来是否可运行”的语义：READY/RUNNING 进入 SUSPENDED_READY，BLOCKED 进入 SUSPENDED_BLOCKED。
     if (pcb.state == ProcessState::READY || pcb.state == ProcessState::RUNNING) {
         removeFromReadyQueuesLocked(pid);
         pcb.state = ProcessState::SUSPENDED_READY;
@@ -246,6 +255,7 @@ bool ProcessManager::resumeProcess(const std::string& owner, std::uint32_t pid, 
 
     auto& pcb = it->second;
     const auto oldState = toString(pcb.state);
+    // 恢复时只有 SUSPENDED_READY 会重新进入就绪队列，SUSPENDED_BLOCKED 仍保持阻塞语义。
     if (pcb.state == ProcessState::SUSPENDED_READY) {
         pcb.state = ProcessState::READY;
         enqueueReadyLocked(pid);
@@ -282,6 +292,7 @@ bool ProcessManager::reniceProcess(
     auto& pcb = it->second;
     const int oldPriority = pcb.priority;
     const int oldQueue = pcb.queueLevel;
+    // renice 会改变队列层级；READY 进程需要先摘队再按新优先级入队，避免队列中出现重复 PID。
     if (pcb.state == ProcessState::READY) {
         removeFromReadyQueuesLocked(pid);
     }
@@ -316,6 +327,7 @@ bool ProcessManager::markSwappedOut(const std::string& owner, std::uint32_t pid,
     }
 
     removeFromReadyQueuesLocked(pid);
+    // 换出释放物理内存后，PCB 仍保留所需内存大小，便于缺页恢复时重新申请。
     pcb.swappedOut = true;
     pcb.memStart = 0;
     pcb.state = ProcessState::SWAPPED;
@@ -381,6 +393,7 @@ bool ProcessManager::demoteProcess(std::uint32_t pid) {
     if (pcb.queueLevel < 2) {
         ++pcb.queueLevel;
     }
+    // MLFQ 降级后重置时间片，下一次重新入队时按新队列的量程运行。
     pcb.timeSliceLeft = timeSliceForQueue(pcb.queueLevel);
     return true;
 }
@@ -842,6 +855,7 @@ void ProcessManager::enqueueReadyLocked(std::uint32_t pid) {
     }
 
     removeFromReadyQueuesLocked(pid);
+    // 就绪队列只保存 PID，完整状态仍回查 pcbTable_；这样队列结构轻量且便于快照校验。
     const auto queueIndex = static_cast<std::size_t>(it->second.queueLevel);
     if (queueIndex < readyQueues_.size()) {
         readyQueues_[queueIndex].push_back(pid);
@@ -864,6 +878,7 @@ void ProcessManager::collectSubtreeLocked(
 
     visited.insert(pid);
     ordered.push_back(pid);
+    // 递归按 PID 排序遍历子进程，使 kill 输出和测试结果稳定。
     for (const auto childPid : sortedIds(it->second.children)) {
         collectSubtreeLocked(owner, childPid, ordered, visited);
     }
