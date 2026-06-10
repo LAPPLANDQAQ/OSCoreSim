@@ -1,0 +1,9 @@
+reset_system
+register alice 123
+login alice 123
+create_pcb short_job 100 1 2
+readyq
+start_sched
+status
+readyq
+exit

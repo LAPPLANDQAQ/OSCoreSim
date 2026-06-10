@@ -201,8 +201,20 @@ void Kernel::schedulerLoop() {
         std::string log;
         {
             std::lock_guard<std::mutex> lock(stateMutex_);     // 与命令线程共用同一把锁
-            if (schedulerRunning_.load() && !schedulerOwner_.empty())
-                log = scheduler_.step(schedulerOwner_, processManager_, memoryManager_);  // 执行一次 MLFQ step
+            if (schedulerRunning_.load() && !schedulerOwner_.empty()) {
+                const auto owner = schedulerOwner_;
+                log = scheduler_.step(owner, processManager_, memoryManager_);  // 执行一次 MLFQ step
+                // 每次自动 step 后检查是否还有可调度的 READY 进程。
+                // 进程可能在 step 中完成、被阻塞、挂起或换出，导致就绪队列为空。
+                // 这里使用 PCB 表而非 readyQueues_ 做判断，避免依赖可能含过期条目的队列。
+                if (!processManager_.hasReadyProcessForUser(owner)) {
+                    schedulerRunning_.store(false);   // 关闭原子标志，防止下一循环再次 step
+                    scheduler_.setRunning(false);
+                    schedulerOwner_.clear();
+                    if (!log.empty()) log += "\n";
+                    log += "[提示] 就绪队列已为空，自动调度器已停止。";
+                }
+            }
         }
         if (!log.empty()) { std::lock_guard<std::mutex> consoleLock(consoleMutex_); std::cout << "\n[自动调度]\n" << log << std::endl; }
         // 运行中按配置间隔调度；停止时上方分支使用更短的 100ms 检查间隔。
@@ -265,6 +277,10 @@ CommandResponse Kernel::handleSchedulerCommand(const Command& command, const Com
         // start_sched 只接受零参数，避免误把其他文本当成配置。
         if (!command.arguments.empty()) return {false, "用法：" + command.name, false};
         if (schedulerRunning_.load()) return {true, "[提示] MLFQ 调度器已在为用户 " + schedulerOwner_ + " 运行。", false};
+        // 自动调度启动前先检查就绪队列，避免在没有 READY 进程时启动一个空转的后台调度循环。
+        // 此检查不影响手动 step 命令，step 仍然可以独立报告 CPU 空闲。
+        if (!processManager_.hasReadyProcessForUser(owner))
+            return {true, "[提示] 当前用户没有 READY 进程，自动调度器未启动。", false};
         // 记录调度归属用户，并打开原子运行标志，schedulerLoop 会在下一轮执行 step。
         schedulerOwner_ = owner; schedulerRunning_.store(true); scheduler_.setRunning(true);
         std::ostringstream output;
@@ -285,6 +301,13 @@ CommandResponse Kernel::handleSchedulerCommand(const Command& command, const Com
         // 重启前先停止，避免清理就绪队列时自动调度同时运行。
         schedulerRunning_.store(false); scheduler_.setRunning(false);
         const auto removed = processManager_.cleanupInvalidReadyQueueEntries(owner);
+        // 清理无效条目后重新检查是否还有可调度的 READY 进程。
+        // 如果清理后队列为空，启动只会产生空转的后台循环，应保持停止。
+        if (!processManager_.hasReadyProcessForUser(owner)) {
+            std::ostringstream output;
+            output << "[提示] 清理后就绪队列为空（已移除 " << removed.size() << " 个无效条目），自动调度器未启动。";
+            return {true, output.str(), false};
+        }
         // 清理无效队列条目后重新指定 owner 并启动。
         schedulerOwner_ = owner; schedulerRunning_.store(true); scheduler_.setRunning(true);
         std::ostringstream output;

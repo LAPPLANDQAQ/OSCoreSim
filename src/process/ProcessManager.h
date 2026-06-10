@@ -63,6 +63,10 @@ public:
 
     // 从 Q0→Q1→Q2 扫描，返回第一个属于 owner 的 READY 进程 PID（同时从队列中移除）
     [[nodiscard]] std::optional<std::uint32_t> pickNextReadyProcess(const std::string& owner);
+    // 只读检查当前用户是否至少有一个可调度的 READY 进程。
+    // 以 pcbTable_ 为权威数据源，不依赖 readyQueues_（可能含过期条目）。
+    // 供自动调度器启动前和 step 后判断是否还有可调度对象。
+    [[nodiscard]] bool hasReadyProcessForUser(const std::string& owner) const;
     // 从所有就绪队列中移除指定 PID（用于状态变更前清理）
     [[nodiscard]] bool removeFromReadyQueues(std::uint32_t pid);
     // 将 READY 进程按 queueLevel 重新入队

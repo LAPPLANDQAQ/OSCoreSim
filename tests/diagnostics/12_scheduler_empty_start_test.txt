@@ -1,0 +1,7 @@
+reset_system
+register alice 123
+login alice 123
+readyq
+start_sched
+status
+exit

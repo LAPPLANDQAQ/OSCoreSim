@@ -592,6 +592,18 @@ bool ProcessManager::hasProcess(const std::string& owner, std::uint32_t pid) con
     return hasOwnedProcessLocked(owner, pid);
 }
 
+// 只读检查 owner 是否至少有一个可调度的 READY 进程。
+// 以 pcbTable_ 为权威数据源（不依赖可能含有过期条目的就绪队列），
+// 供自动调度器在启动前和 step 后判断是否还有可调度对象。
+bool ProcessManager::hasReadyProcessForUser(const std::string& owner) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [_, pcb] : pcbTable_) {
+        if (pcb.owner == owner && pcb.state == ProcessState::READY && !pcb.swappedOut)
+            return true;
+    }
+    return false;
+}
+
 bool ProcessManager::isSwappedOut(const std::string& owner, std::uint32_t pid) const {
     // 查询某用户的某进程是否已经换出。
     std::lock_guard<std::mutex> lock(mutex_);
