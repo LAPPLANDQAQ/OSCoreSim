@@ -20,9 +20,9 @@ namespace oscore {
 class OverviewRenderer {
 public:
     struct SchedulerInfo {
-        bool running = false;
-        std::string owner;
-        int intervalMs = 500;
+        bool running = false;   // 自动调度器是否正在运行。
+        std::string owner;      // 当前调度器服务的用户。
+        int intervalMs = 500;   // 自动调度间隔，单位毫秒。
     };
 
     // 渲染完整 overview 输出。

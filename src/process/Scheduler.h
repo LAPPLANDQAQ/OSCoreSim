@@ -37,7 +37,7 @@ private:
     // 队列名称格式化："Q0", "Q1", "Q2"
     [[nodiscard]] std::string queueName(int queueLevel) const;
 
-    bool running_ = false;  // 自动调度线程的运行标志
+    bool running_ = false;  // 自动调度线程的运行标志；真正的线程循环由 Kernel::schedulerLoop 控制。
 };
 
 } // namespace oscore

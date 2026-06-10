@@ -22,7 +22,7 @@ struct Command {
     std::string name;                       // 命令名（小写）
     std::vector<std::string> arguments;     // 参数列表（按空格拆分）
 
-    [[nodiscard]] bool empty() const { return name.empty(); }
+    [[nodiscard]] bool empty() const { return name.empty(); } // name 为空表示用户输入为空行或全空白。
 };
 
 // CommandRequest：前台线程创建、放入 BlockingQueue 的请求包。
@@ -47,7 +47,7 @@ struct CommandResponse {
 // CommandContext：只读上下文，供 Dispatcher 的 status 等命令展示当前内核运行状态。
 // 由 Kernel::executeRequest 在持锁期间构造，传入 CommandDispatcher::dispatch。
 struct CommandContext {
-    std::uint64_t requestId = 0;
+    std::uint64_t requestId = 0;             // 本次请求编号，用于状态输出和调试追踪。
     std::string username;                    // 当前登录用户（空 = 未登录）
     CommandSource source = CommandSource::LocalConsole;
     bool workerRunning = false;              // worker 线程是否运行中

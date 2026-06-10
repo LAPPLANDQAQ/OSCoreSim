@@ -217,29 +217,27 @@ std::string MemoryManager::showMemory(const std::string& owner) const {
                << visibleTag << '\n';
     }
 
-    const int mapWidth = 64;
+    // Memory Map 渲染当前内存分区表：每个竖线分隔段代表一个物理内存块。
+    // P-标签(start,size) 为进程块，K-标签(start,size) 为手动分配块，Free(size) 为空闲块。
+    // 此输出仅用于可视化观察，不修改分配、释放、合并或紧缩行为。
     output << "\nMemory Map:\n";
-    std::string mapLine;
-    mapLine.reserve(static_cast<std::size_t>(mapWidth) + 2);
+    int lineLen = 0;
+    bool first = true;
     for (const auto& block : blocks_) {
-        const int blockChars = std::max(1,
-            static_cast<int>(static_cast<double>(block.size) / totalMemoryKB_ * mapWidth));
-        if (block.type == MemoryBlockType::FREE) {
-            mapLine.append(static_cast<std::size_t>(blockChars), '.');
-        } else if (block.type == MemoryBlockType::PROCESS) {
-            mapLine.append(static_cast<std::size_t>(blockChars), 'P');
-        } else {
-            mapLine.append(static_cast<std::size_t>(blockChars), 'K');
-        }
+        std::ostringstream entry;
+        if (block.type == MemoryBlockType::FREE)
+            entry << "Free(" << std::setfill('0') << std::setw(4) << block.size << ")";
+        else if (block.type == MemoryBlockType::PROCESS)
+            entry << "P-" << block.tag << "(" << std::setfill('0') << std::setw(4) << block.start << "," << block.size << ")";
+        else
+            entry << "K-" << block.tag << "(" << std::setfill('0') << std::setw(4) << block.start << "," << block.size << ")";
+        std::string seg = (first ? "" : " | ") + entry.str();
+        if (lineLen > 0 && lineLen + static_cast<int>(seg.size()) > 76) { output << '\n'; lineLen = 0; seg = entry.str(); }
+        output << seg;
+        lineLen += static_cast<int>(seg.size());
+        first = false;
     }
-    if (mapLine.size() > static_cast<std::size_t>(mapWidth)) {
-        mapLine.resize(static_cast<std::size_t>(mapWidth));
-    }
-    while (mapLine.size() < static_cast<std::size_t>(mapWidth)) {
-        mapLine.push_back('.');
-    }
-    output << '[' << mapLine << "]\n"
-           << "Legend: P=Process, K=Manual/Kernel, .=Free";
+    output << "\nLegend: P=Process, K=Manual/Kernel, Free=Free";
     return output.str();
 }
 

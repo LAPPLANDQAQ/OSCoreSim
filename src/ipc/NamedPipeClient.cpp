@@ -10,6 +10,7 @@ namespace oscore {
 bool NamedPipeClient::sendCommand(const std::string& command, std::string& response) {
     // 等待管道可用（Master 可能尚未完全启动）
     if (!WaitNamedPipeA(kPipeName, kTimeoutMs)) {
+        // 等待超时通常表示 MASTER 未启动或管道线程未成功创建。
         response = "[ERROR] Cannot connect to Kernel Master. "
                    "Please make sure the first instance is running.";
         return false;
@@ -35,6 +36,7 @@ bool NamedPipeClient::sendCommand(const std::string& command, std::string& respo
     // 设置为消息读模式，与服务器端的 PIPE_TYPE_MESSAGE 匹配
     DWORD mode = PIPE_READMODE_MESSAGE;
     if (!SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr)) {
+        // 模式设置失败时继续通信可能破坏消息边界，因此立即关闭。
         CloseHandle(pipe);
         response = "[ERROR] Failed to set pipe read mode (error="
                    + std::to_string(GetLastError()) + ").";
@@ -43,6 +45,7 @@ bool NamedPipeClient::sendCommand(const std::string& command, std::string& respo
 
     // 发送命令。Client 不直接访问 Kernel 或 data/os_state.bin，只负责 IPC 转发。
     if (!writeMessage(pipe, command)) {
+        // 发送失败时关闭本次连接，调用方会退出 CLIENT 循环或提示错误。
         CloseHandle(pipe);
         response = "[ERROR] Failed to send command to Master.";
         return false;
@@ -50,9 +53,11 @@ bool NamedPipeClient::sendCommand(const std::string& command, std::string& respo
 
     // 接收响应
     const auto result = readMessage(pipe);
+    // 每次请求使用短连接，收到响应后立即关闭 HANDLE。
     CloseHandle(pipe);
 
     if (result.empty()) {
+        // 空响应被视为通信失败，避免把失败误当成命令正常无输出。
         response = "[ERROR] Failed to receive response from Master.";
         return false;
     }
@@ -68,6 +73,7 @@ std::string NamedPipeClient::readMessage(HANDLE pipe) {
     if (!ReadFile(pipe, &length, sizeof(length), &bytesRead, nullptr) ||
         bytesRead != sizeof(length) ||
         length == 0) {
+        // 无法读取长度前缀时无法继续解析消息。
         return {};
     }
 
@@ -79,8 +85,10 @@ std::string NamedPipeClient::readMessage(HANDLE pipe) {
         DWORD chunk = 0;
         if (!ReadFile(pipe, buffer.data() + totalRead, length - totalRead, &chunk, nullptr) ||
             chunk == 0) {
+            // 响应体读取中断则整条响应失败。
             return {};
         }
+        // 持续读取直到收到 length 指定的全部字节。
         totalRead += chunk;
     }
 
@@ -93,6 +101,7 @@ bool NamedPipeClient::writeMessage(HANDLE pipe, const std::string& message) {
     DWORD bytesWritten = 0;
     if (!WriteFile(pipe, &length, sizeof(length), &bytesWritten, nullptr) ||
         bytesWritten != sizeof(length)) {
+        // 长度前缀写失败，服务端无法知道命令体大小。
         return false;
     }
 
@@ -105,6 +114,7 @@ bool NamedPipeClient::writeMessage(HANDLE pipe, const std::string& message) {
         if (!WriteFile(pipe, data + totalWritten, length - totalWritten, &chunk, nullptr)) {
             return false;
         }
+        // 累计写入字节数，直到命令体完整发送。
         totalWritten += chunk;
     }
 

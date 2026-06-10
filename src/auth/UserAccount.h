@@ -24,10 +24,12 @@ struct UserAccount {
 };
 
 [[nodiscard]] inline const char* toString(AccountStatus status) {
+    // 将枚举值转换为可持久化、可展示的稳定文本。
     switch (status) {
     case AccountStatus::NORMAL: return "NORMAL";
     case AccountStatus::LOCKED: return "LOCKED";
     }
+    // 理论上不会到达；保留 UNKNOWN 便于发现异常枚举值。
     return "UNKNOWN";
 }
 

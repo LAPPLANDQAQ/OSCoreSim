@@ -28,8 +28,11 @@ namespace oscore {
 // 线程安全：所有公开方法内部加锁（mutex_）。
 class UserManager {
 public:
+    // 注册新用户：校验格式、生成盐值、保存密码散列。
     bool registerUser(const std::string& username, const std::string& password, std::string& message);
+    // 登录用户：校验密码、更新失败计数、必要时锁定账户。
     bool login(const std::string& username, const std::string& password, std::string& message);
+    // 退出当前会话：只清除 currentUser_，不删除账户。
     bool logout(std::string& message);
 
     [[nodiscard]] bool isLoggedIn() const;
@@ -57,7 +60,7 @@ private:
     // FNV-1a 风格密码散列（固定 64 位 offset + prime，输出 16 进制字符串）
     [[nodiscard]] std::string hashPassword(const std::string& salt, const std::string& password) const;
 
-    mutable std::mutex mutex_;
+    mutable std::mutex mutex_;                                // 保护 users_、currentUser_ 和 nextSaltId_。
     std::unordered_map<std::string, UserAccount> users_;  // 用户名 → 账户记录
     std::optional<std::string> currentUser_;              // 当前登录用户名（nullopt = 未登录）
     std::uint64_t nextSaltId_ = 1;                        // 盐值自增计数器

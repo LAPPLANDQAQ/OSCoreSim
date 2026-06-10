@@ -9,14 +9,17 @@
 namespace oscore {
 
 NamedPipeServer::~NamedPipeServer() {
+    // 析构时确保管道线程停止，避免后台线程访问已销毁对象。
     stop();
 }
 
 bool NamedPipeServer::start(CommandHandler handler) {
     if (running_.load()) {
+        // 已运行时不重复启动线程。
         return false;
     }
 
+    // 保存 Kernel 命令处理回调。
     handler_ = std::move(handler);
     running_.store(true);
     // MASTER 进程启动后台管道线程，后续 CLIENT 命令都会通过 handler_ 进入 Kernel。
@@ -26,6 +29,7 @@ bool NamedPipeServer::start(CommandHandler handler) {
 
 void NamedPipeServer::stop() {
     if (!running_.load()) {
+        // stop() 可重复调用，未运行时直接返回。
         return;
     }
 
@@ -62,7 +66,9 @@ void NamedPipeServer::serverLoop() {
     // 预创建第一个管道实例，确保在进入循环之前管道名称已存在
     HANDLE pipe = CreateNamedPipeA(
         kPipeName,
+        // 双向管道：服务端既读取命令，也写回响应。
         PIPE_ACCESS_DUPLEX,
+        // 消息模式保证一次消息边界可被客户端按协议识别。
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
         PIPE_UNLIMITED_INSTANCES,
         kBufferSize,
@@ -71,6 +77,7 @@ void NamedPipeServer::serverLoop() {
         nullptr);
 
     if (pipe == INVALID_HANDLE_VALUE) {
+        // 管道创建失败时无法服务 CLIENT，线程直接退出。
         return;
     }
 
@@ -78,6 +85,7 @@ void NamedPipeServer::serverLoop() {
         // 阻塞等待客户端连接
         const BOOL connected = ConnectNamedPipe(pipe, nullptr);
         if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
+            // 连接失败时丢弃当前句柄，并尝试创建新的管道实例。
             CloseHandle(pipe);
             pipe = CreateNamedPipeA(kPipeName,
                 PIPE_ACCESS_DUPLEX,
@@ -85,6 +93,7 @@ void NamedPipeServer::serverLoop() {
                 PIPE_UNLIMITED_INSTANCES,
                 kBufferSize, kBufferSize, 0, nullptr);
             if (pipe == INVALID_HANDLE_VALUE) {
+                // 第一次重建失败时短暂等待，避免忙等。
                 Sleep(100);
                 pipe = CreateNamedPipeA(kPipeName,
                     PIPE_ACCESS_DUPLEX,
@@ -96,6 +105,7 @@ void NamedPipeServer::serverLoop() {
         }
 
         if (!running_.load()) {
+            // stop() 唤醒 ConnectNamedPipe 后会走到这里，立即清理并退出。
             DisconnectNamedPipe(pipe);
             CloseHandle(pipe);
             return;
@@ -109,6 +119,7 @@ void NamedPipeServer::serverLoop() {
 
             // 将响应写回客户端（如果写失败，客户端会检测到断连）
             [[maybe_unused]] const bool writeOk = writeMessage(pipe, response);
+            // 刷新管道缓冲区，确保响应尽快送达 CLIENT。
             FlushFileBuffers(pipe);
         }
 
@@ -116,6 +127,7 @@ void NamedPipeServer::serverLoop() {
         // 这样任何时候管道名称都存在，Client 的 WaitNamedPipeA 不会超时
         HANDLE nextPipe = CreateNamedPipeA(
             kPipeName,
+            // 下一条管道沿用相同的双向消息模式和缓冲区大小。
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             PIPE_UNLIMITED_INSTANCES,
@@ -131,6 +143,7 @@ void NamedPipeServer::serverLoop() {
 
         // 如果创建失败，短暂等待后重试
         if (pipe == INVALID_HANDLE_VALUE) {
+            // 重试可以缓解短时间资源占用导致的 CreateNamedPipeA 失败。
             Sleep(50);
             pipe = CreateNamedPipeA(kPipeName,
                 PIPE_ACCESS_DUPLEX,
@@ -153,6 +166,7 @@ std::string NamedPipeServer::readMessage(HANDLE pipe) {
     if (!ReadFile(pipe, &length, sizeof(length), &bytesRead, nullptr) ||
         bytesRead != sizeof(length) ||
         length == 0) {
+        // 长度读取失败或长度为 0 都视为无效消息。
         return {};
     }
 
@@ -164,8 +178,10 @@ std::string NamedPipeServer::readMessage(HANDLE pipe) {
         DWORD chunk = 0;
         if (!ReadFile(pipe, buffer.data() + totalRead, length - totalRead, &chunk, nullptr) ||
             chunk == 0) {
+            // 任一分片读取失败都放弃整条消息。
             return {};
         }
+        // 累计已读取字节数，直到达到长度前缀指定的长度。
         totalRead += chunk;
     }
 
@@ -178,6 +194,7 @@ bool NamedPipeServer::writeMessage(HANDLE pipe, const std::string& message) {
     DWORD bytesWritten = 0;
     if (!WriteFile(pipe, &length, sizeof(length), &bytesWritten, nullptr) ||
         bytesWritten != sizeof(length)) {
+        // 长度前缀写失败时，客户端无法正确读取响应。
         return false;
     }
 
@@ -190,6 +207,7 @@ bool NamedPipeServer::writeMessage(HANDLE pipe, const std::string& message) {
         if (!WriteFile(pipe, data + totalWritten, length - totalWritten, &chunk, nullptr)) {
             return false;
         }
+        // 累计已写字节数，直到整条响应写完。
         totalWritten += chunk;
     }
 

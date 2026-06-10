@@ -35,10 +35,12 @@ std::string Scheduler::step(
     ProcessManager& processManager,
     MemoryManager& memoryManager) {
     std::ostringstream output;
+    // 每次 step 都返回完整日志，调用方只负责打印，不再解释调度细节。
     output << "=== 调度单步 / Scheduler Step ===\n\n";
 
     // ---------- [1] 调度前：记录就绪队列快照 ----------
     const auto before = processManager.readyQueueSnapshot(owner);
+    // before 是调度前的只读快照，用于和调度后队列对比。
     output << "[调度前]\n" << before << "\n\n";
 
     // ---------- [2] 选择进程 ----------
@@ -49,6 +51,7 @@ std::string Scheduler::step(
 
     // 情况 A：没有可调度的进程 → CPU 空闲
     if (!selectedPid.has_value()) {
+        // 没有 READY 进程时不修改任何 PCB，仅输出 CPU 空闲。
         output << "[选择]\n"
                << "未找到 READY 进程。\n\n"
                << "[结果]\n"
@@ -61,6 +64,7 @@ std::string Scheduler::step(
     // 获取进程副本（快照），避免在执行过程中引用失效
     auto selected = processManager.getProcessCopy(*selectedPid);
     if (!selected.has_value()) {
+        // 防御性分支：如果刚取出的 PID 已不存在，直接结束本次 step。
         output << "[选择]\n"
                << "选中的 PID 在执行前消失。\n\n"
                << "[结果]\nCPU 空闲。\n\n"
@@ -78,6 +82,7 @@ std::string Scheduler::step(
     output << "[选择]\n"
            << "扫描 Q0 -> Q1 -> Q2";
     if (!cleaned.empty()) {
+        // cleaned 中的 PID 是调度前被剔除的陈旧就绪队列条目。
         output << "\n已移除无效就绪队列条目:";
         for (const auto pid : cleaned) output << ' ' << pid;
     }
@@ -91,6 +96,7 @@ std::string Scheduler::step(
     // ---------- [3] 执行 tick ----------
     // markRunning 做三件事：从就绪队列移除 + 状态改为 RUNNING + 重置时间片（如需要）
     if (!processManager.markRunning(selected->pid)) {
+        // 标记 RUNNING 失败通常说明状态已不再是 READY，本次调度放弃。
         output << "[执行]\n"
                << "切换 PID=" << selected->pid << " 到 RUNNING 失败。\n\n"
                << "[结果]\nCPU 空闲。\n\n"
@@ -105,6 +111,7 @@ std::string Scheduler::step(
     // 循环提前终止条件：remainingTime 归零或 timeSliceLeft 耗尽
     if (!processManager.tickProcess(selected->pid, quantum, tickLog)) {
         // tick 执行失败 → 恢复为 READY 并重新入队
+        // 这里不删除进程，尽量恢复到可调度状态并把错误写入日志。
         (void)processManager.markReady(selected->pid);
         (void)processManager.enqueueReadyProcess(selected->pid);
         output << tickLog << "\n\n"
@@ -120,6 +127,7 @@ std::string Scheduler::step(
     // 重新获取进程副本以读取执行后的状态
     const auto afterRun = processManager.getProcessCopy(selected->pid);
     if (!afterRun.has_value()) {
+        // 如果执行后 PCB 不存在，说明外部状态发生异常变化，本次只输出队列快照。
         output << "[结果]\n"
                << "PID=" << selected->pid << " 在执行后消失。\n\n"
                << "[调度后]\n"
@@ -129,6 +137,7 @@ std::string Scheduler::step(
 
     // 实际消耗的 tick 数 = 执行后 executedTime - 执行前 executedTime
     const auto ticksUsed = afterRun->executedTime - selected->executedTime;
+    // ticksUsed 用来判断是否耗尽完整时间片，不能直接使用 quantum。
     output << "[结果]\n";
 
     // --- 结果 A：进程完成（remainingTime == 0）---
@@ -136,11 +145,13 @@ std::string Scheduler::step(
         std::vector<std::uint32_t> removedPids;
         std::string killMessage;
         // killProcess 递归删除进程子树
+        // 完成父进程时，子进程也会被递归删除，符合 kill_pcb 子树语义。
         processManager.killProcess(owner, selected->pid, removedPids, killMessage);
         output << "PID=" << selected->pid << " 已完成。\n" << killMessage;
         // 释放子树中所有进程的物理内存
         for (const auto removedPid : removedPids) {
             std::string memoryMessage;
+            // MemoryManager 只在找到对应 PROCESS 块时返回 true 并输出释放信息。
             if (memoryManager.freeByPid(owner, removedPid, memoryMessage)) {
                 output << '\n' << memoryMessage;
             }
@@ -156,10 +167,12 @@ std::string Scheduler::step(
             (void)processManager.demoteProcess(selected->pid);
         }
         // 进程回到 READY 状态并重新入队（保持或更新后的队列层级）
+        // markReady 只改状态和时间片；enqueueReadyProcess 才真正把 PID 放回队列。
         (void)processManager.markReady(selected->pid);
         (void)processManager.enqueueReadyProcess(selected->pid);
 
         const auto finalPcb = processManager.getProcessCopy(selected->pid);
+        // finalPcb 读取降级后的队列层级，用于日志展示。
         output << "PID=" << selected->pid << " 已用 "
                << (usedFullQuantum ? "完整时间片" : "部分时间片")
                << "但未完成。\n";
@@ -179,6 +192,8 @@ std::string Scheduler::step(
 }
 
 bool Scheduler::isRunning() const { return running_; }
+
+// Kernel 调用 setRunning 控制自动调度标志；step 本身不检查该标志。
 void Scheduler::setRunning(bool running) { running_ = running; }
 
 int Scheduler::quantumForQueue(int queueLevel) const {
@@ -191,6 +206,7 @@ int Scheduler::quantumForQueue(int queueLevel) const {
 }
 
 std::string Scheduler::queueName(int queueLevel) const {
+    // 日志中统一使用 Q0/Q1/Q2 表示队列层级。
     return "Q" + std::to_string(queueLevel);
 }
 

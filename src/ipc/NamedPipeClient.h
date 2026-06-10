@@ -30,7 +30,7 @@ private:
     [[nodiscard]] static bool writeMessage(HANDLE pipe, const std::string& message);
 
     static constexpr const char* kPipeName = "\\\\.\\pipe\\OS_SIM_PIPE_2026";
-    static constexpr DWORD kTimeoutMs = 2000;
+    static constexpr DWORD kTimeoutMs = 2000;  // 等待 MASTER 管道就绪的最长时间。
 };
 
 } // namespace oscore

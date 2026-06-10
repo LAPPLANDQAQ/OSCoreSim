@@ -20,6 +20,8 @@ public:
 
     // 以指定角色运行程序。role 由 InstanceGuard 在 main() 中判定后传入。
     int run(InstanceRole role);
+
+    // 测试或脚本可注入自定义输入/输出流；真实程序运行时由上面的重载使用 std::cin/std::cout。
     int run(std::istream& input, std::ostream& output, InstanceRole role);
 
 private:
@@ -35,9 +37,9 @@ private:
     // Windows 下用 _isatty 判断是否为真实交互终端；重定向脚本自动进入原始命令模式。
     [[nodiscard]] static bool isInteractiveInput(std::istream& input);
 
-    Kernel kernel_;
-    NamedPipeServer pipeServer_;
-    NamedPipeClient pipeClient_;
+    Kernel kernel_;                 // 仅 MASTER 真正启动并持有内核状态。
+    NamedPipeServer pipeServer_;     // MASTER 对外监听客户端命令的命名管道服务端。
+    NamedPipeClient pipeClient_;     // CLIENT 用于把本地输入转发给 MASTER 的命名管道客户端。
 };
 
 } // namespace oscore

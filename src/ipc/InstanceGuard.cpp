@@ -7,6 +7,7 @@ static constexpr const char* kMasterMutexName = "Local\\OS_SIM_KERNEL_MASTER_MUT
 
 InstanceGuard::~InstanceGuard() {
     if (mutexHandle_ != nullptr) {
+        // 关闭句柄会释放本进程对命名互斥量对象的引用。
         CloseHandle(mutexHandle_);
         mutexHandle_ = nullptr;
     }
@@ -14,6 +15,7 @@ InstanceGuard::~InstanceGuard() {
 
 bool InstanceGuard::initialize() {
     // 创建命名互斥量。如果已存在，GetLastError() 返回 ERROR_ALREADY_EXISTS。
+    // 第一个实例创建成功后成为 MASTER；后续实例打开同名互斥量后成为 CLIENT。
     mutexHandle_ = CreateMutexA(
         nullptr,            // 默认安全属性
         FALSE,              // 不需要立即拥有
@@ -38,10 +40,12 @@ bool InstanceGuard::initialize() {
 }
 
 InstanceRole InstanceGuard::role() const {
+    // 返回 initialize 判定出的当前实例角色。
     return role_;
 }
 
 std::string InstanceGuard::roleName() const {
+    // 将枚举角色转换为显示文本。
     return role_ == InstanceRole::MASTER ? "MASTER" : "CLIENT";
 }
 

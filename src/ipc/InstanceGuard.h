@@ -40,8 +40,8 @@ public:
     [[nodiscard]] std::string roleName() const;
 
 private:
-    HANDLE mutexHandle_ = nullptr;
-    InstanceRole role_ = InstanceRole::CLIENT;
+    HANDLE mutexHandle_ = nullptr;                 // Windows 命名互斥量句柄，析构时关闭。
+    InstanceRole role_ = InstanceRole::CLIENT;     // 默认按 CLIENT 处理，initialize 成功后再修正。
 };
 
 } // namespace oscore

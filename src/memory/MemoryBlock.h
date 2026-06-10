@@ -51,21 +51,25 @@ struct CompactionResult {
 };
 
 [[nodiscard]] inline const char* toString(MemoryBlockType type) {
+    // 将内存块类型转成稳定文本，用于表格、日志和快照摘要。
     switch (type) {
     case MemoryBlockType::FREE:    return "FREE";
     case MemoryBlockType::PROCESS: return "PROCESS";
     case MemoryBlockType::KERNEL:  return "KERNEL";
     case MemoryBlockType::SWAPPED: return "SWAPPED";
     }
+    // 理论上不会到达；UNKNOWN 用于显示异常枚举值。
     return "UNKNOWN";
 }
 
 [[nodiscard]] inline const char* toString(AllocAlgorithm algorithm) {
+    // 将分配算法枚举转成稳定文本，供 show_mem/status 输出。
     switch (algorithm) {
     case AllocAlgorithm::FIRST_FIT: return "FIRST_FIT";
     case AllocAlgorithm::BEST_FIT:  return "BEST_FIT";
     case AllocAlgorithm::WORST_FIT: return "WORST_FIT";
     }
+    // 理论上不会到达；UNKNOWN 用于显示异常算法值。
     return "UNKNOWN";
 }
 

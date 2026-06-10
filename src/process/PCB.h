@@ -50,6 +50,7 @@ struct PCB {
 
 // 将 ProcessState 枚举转为可读字符串，用于终端显示和日志输出。
 [[nodiscard]] inline const char* toString(ProcessState state) {
+    // 统一把状态枚举转为英文状态名，供列表、详情、树形输出复用。
     switch (state) {
     case ProcessState::NEW:              return "NEW";
     case ProcessState::READY:            return "READY";
@@ -60,6 +61,7 @@ struct PCB {
     case ProcessState::TERMINATED:       return "TERMINATED";
     case ProcessState::SWAPPED:          return "SWAPPED";
     }
+    // 理论上不会到达；UNKNOWN 用于兜底显示异常状态。
     return "UNKNOWN";
 }
 

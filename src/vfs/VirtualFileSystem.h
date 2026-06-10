@@ -12,12 +12,12 @@ namespace oscore {
 // 每个文件归属于一个用户（owner），不同用户可以有同名文件。
 // fileId 全局唯一递增。
 struct VirtualFile {
-    std::uint32_t fileId = 0;
-    std::string owner;
-    std::string name;
-    std::string content;
-    std::uint64_t createdAt = 0;
-    std::uint64_t modifiedAt = 0;
+    std::uint32_t fileId = 0;     // 全局唯一文件 ID，随 nextFileId_ 递增。
+    std::string owner;            // 文件所属用户；VFS 用它实现用户隔离。
+    std::string name;             // 文件名，按 UTF-8 字节存储，可包含中文。
+    std::string content;          // 文件内容，std::string 可保存多行 UTF-8 文本。
+    std::uint64_t createdAt = 0;  // 创建时间戳。
+    std::uint64_t modifiedAt = 0; // 最近修改时间戳。
 };
 
 // VirtualFileSystem —— 最小虚拟文件系统
@@ -69,8 +69,8 @@ private:
     // 验证文件名合法性
     [[nodiscard]] static bool isValidFileName(const std::string& name, std::string& message);
 
-    std::uint32_t nextFileId_ = 1;
-    std::vector<VirtualFile> files_;
+    std::uint32_t nextFileId_ = 1;       // 下一个可分配文件 ID，持久化后继续递增。
+    std::vector<VirtualFile> files_;     // 所有用户的虚拟文件，操作时通过 owner 过滤。
 };
 
 } // namespace oscore

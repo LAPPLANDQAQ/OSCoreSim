@@ -55,9 +55,9 @@ private:
     static constexpr const char* kPipeName = "\\\\.\\pipe\\OS_SIM_PIPE_2026";
     static constexpr DWORD kBufferSize = 4096;
 
-    CommandHandler handler_;
-    std::thread serverThread_;
-    std::atomic<bool> running_{false};
+    CommandHandler handler_;              // MASTER 注入的命令处理器，内部调用 Kernel::submitCommand。
+    std::thread serverThread_;            // 管道监听线程。
+    std::atomic<bool> running_{false};    // 线程循环运行标志，stop() 会置 false。
 };
 
 } // namespace oscore

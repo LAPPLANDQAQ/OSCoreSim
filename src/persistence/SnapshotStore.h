@@ -36,11 +36,11 @@ struct KernelSnapshot {
 
 // SnapshotSummary：快照摘要，用于 save/load 后的状态报告。
 struct SnapshotSummary {
-    std::size_t users = 0;
-    std::size_t processes = 0;
-    std::size_t memoryBlocks = 0;
-    std::size_t vfsFiles = 0;
-    std::array<std::size_t, 3> readyQueueSizes{};
+    std::size_t users = 0;                    // 快照中的用户数量。
+    std::size_t processes = 0;                // 快照中的 PCB 数量。
+    std::size_t memoryBlocks = 0;             // 快照中的内存块数量。
+    std::size_t vfsFiles = 0;                 // 快照中的虚拟文件数量。
+    std::array<std::size_t, 3> readyQueueSizes{};  // Q0/Q1/Q2 各自保存的 PID 数量。
 };
 
 // SnapshotStore：二进制快照文件读写器。
